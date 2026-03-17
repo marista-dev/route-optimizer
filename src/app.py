@@ -152,50 +152,39 @@ new kakao.Postcode({{
 </html>"""
 
 
-def _open_browser_window(url: str) -> None:
-    """
-    Chrome/Edge를 새 창으로 열고 --window-size 옵션으로 크기 지정.
-    실패 시 webbrowser 모듈로 fallback.
-    """
-    w, h = 500, 680
+def _find_chromium_exe() -> str | None:
+    """Chrome/Edge 실행 파일 경로 탐색. 없으면 None."""
     candidates = [
-        # Windows Chrome
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        # Windows Edge
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        # macOS
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     ]
-    flags = [f"--new-window", f"--window-size={w},{h}",
-             "--window-position=400,100", url]
-    for exe in candidates:
-        if os.path.exists(exe):
-            try:
-                subprocess.Popen([exe] + flags,
-                                 stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL)
-                return
-            except Exception:
-                continue
-    # fallback: 기본 브라우저 새 창
-    webbrowser.open_new(url)
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
 
 
-def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
+def open_postcode_browser(timeout=180) -> dict:
     """
-    로컬 HTTP 서버를 열고 새 브라우저 창으로 카카오 우편번호 페이지를 표시.
-    사용자가 주소를 선택하면 {'address': str, 'zonecode': str} 반환.
-    취소/타임아웃 시 {} 반환.
-    """
-    port   = _get_free_port()
-    result = {}
-    done   = threading.Event()
+    로컬 HTTP 서버 + Chrome/Edge 격리 인스턴스로 카카오 우편번호 UI 표시.
 
+    핵심 전략:
+    - --user-data-dir=임시폴더 : 기존 Chrome 인스턴스와 완전 격리 → 새 창 보장, 크기 적용 가능
+    - 주소 선택 후 Python이 직접 프로세스 종료 → JS window.close() 보안 정책 우회
+    - 브라우저 없으면 webbrowser 모듈 fallback (창 제어 불가)
+    """
+    import tempfile, shutil
+
+    port       = _get_free_port()
+    result     = {}
+    done       = threading.Event()
     html_bytes = _make_postcode_html(port).encode('utf-8')
 
+    # ── HTTP 서버 ─────────────────────────────────────────────────────────────
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
@@ -206,19 +195,16 @@ def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
 
         def do_POST(self):
             try:
-                length = int(self.headers.get('Content-Length', 0))
-                body   = self.rfile.read(length)
-                data   = json.loads(body)
-                result.update(data)
+                body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                result.update(json.loads(body))
             except Exception:
                 pass
-            # CORS 허용 (브라우저에서 localhost POST)
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
-            done.set()
+            done.set()  # 주소 수신 → 대기 해제
 
         def do_OPTIONS(self):
             self.send_response(200)
@@ -228,21 +214,71 @@ def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
             self.end_headers()
 
         def log_message(self, *_):
-            pass  # 로그 억제
+            pass
 
     server = http.server.HTTPServer(('localhost', port), _Handler)
-    server.timeout = 1  # handle_request 블로킹 최대 1초
+    server.timeout = 1
 
     def _serve():
         while not done.is_set():
             server.handle_request()
         server.server_close()
 
-    t = threading.Thread(target=_serve, daemon=True)
-    t.start()
+    threading.Thread(target=_serve, daemon=True).start()
 
-    _open_browser_window(f'http://localhost:{port}')
+    # ── 브라우저 실행 ─────────────────────────────────────────────────────────
+    exe      = _find_chromium_exe()
+    proc     = None
+    tmp_dir  = None
+    url      = f'http://localhost:{port}'
+
+    if exe:
+        # 격리된 임시 프로파일 → 기존 인스턴스와 완전히 분리된 새 창
+        tmp_dir = tempfile.mkdtemp(prefix='postcode_')
+        flags = [
+            f'--user-data-dir={tmp_dir}',  # 격리 인스턴스 (핵심)
+            '--new-window',
+            '--window-size=500,680',
+            '--window-position=300,80',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--disable-extensions',
+            url,
+        ]
+        try:
+            proc = subprocess.Popen(
+                [exe] + flags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            proc = None
+
+    if proc is None:
+        # fallback: 기본 브라우저 (창 크기 제어 불가)
+        webbrowser.open_new(url)
+
+    # ── 주소 선택 대기 ────────────────────────────────────────────────────────
     done.wait(timeout=timeout)
+
+    # ── 브라우저 프로세스 종료 ────────────────────────────────────────────────
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    # 임시 프로파일 폴더 정리 (백그라운드)
+    if tmp_dir:
+        def _cleanup():
+            time.sleep(1)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        threading.Thread(target=_cleanup, daemon=True).start()
+
     return result
 
 
@@ -328,7 +364,7 @@ class AddressSearchDialog(ctk.CTkToplevel):
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        raw = open_postcode_browser("출발지 주소 찾기")
+        raw = open_postcode_browser()
         if raw.get('address'):
             geo = geocode(raw['address'], self.headers)
             if geo:
@@ -450,7 +486,7 @@ class AddressFixDialog(ctk.CTkToplevel):
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        raw = open_postcode_browser("올바른 주소 찾기")
+        raw = open_postcode_browser()
         if raw.get('address'):
             geo = geocode(raw['address'], self.headers)
             if geo:
