@@ -991,7 +991,7 @@ class App(ctk.CTk):
             self._step("6단계 — 결과 파일 저장 중", 0.90)
             self._log(f"\n{'─'*36}"); self._log("  6단계   결과 파일 저장")
             self._log("─" * 36)
-            out = self._save_xlsx(mapping)
+            out = self._save_xlsx(mapping, df)
             if out is None:
                 self._reset_btn(); return
             self._step("✅  모든 작업 완료!", 1.0, _SUCCESS)
@@ -1006,11 +1006,15 @@ class App(ctk.CTk):
         finally:
             self._reset_btn()
 
-    def _save_xlsx(self, mapping: dict):
+    def _save_xlsx(self, mapping: dict, df: pd.DataFrame):
         try:
+            base = os.path.splitext(self.file_path)[0]
+
+            # ── ① 배송순서 열 작성 후 오름차순 정렬된 xlsx 저장 ──────────────
             wb   = load_workbook(self.file_path)
             ws   = wb.active
             hrow = [c.value for c in ws[1]]
+
             if '배송순서' in hrow:
                 col = hrow.index('배송순서') + 1
                 self._log("  '배송순서' 열 존재 → 덮어씁니다")
@@ -1019,13 +1023,41 @@ class App(ctk.CTk):
                 ws.cell(row=1, column=1, value='배송순서')
                 col = 1
                 self._log("  '배송순서' 열 없음 → 첫 번째 열에 추가")
+
+            # 배송순서 값 입력
             for df_idx, order_val in mapping.items():
                 ws.cell(row=df_idx + 2, column=col, value=order_val)
-            base = os.path.splitext(self.file_path)[0]
-            out  = f"{base}_배송순서완성.xlsx"
-            wb.save(out)
-            self._log(f"✅  저장 완료: {os.path.basename(out)}")
-            return out
+
+            # 데이터 행 전체를 배송순서 기준 오름차순 정렬
+            data_rows = list(ws.iter_rows(min_row=2, values_only=True))
+            data_rows.sort(key=lambda r: (r[col - 1] is None, r[col - 1]))
+            for row_idx, row_data in enumerate(data_rows, start=2):
+                for c_idx, val in enumerate(row_data, start=1):
+                    ws.cell(row=row_idx, column=c_idx, value=val)
+
+            out_xlsx = f"{base}_배송순서완성.xlsx"
+            wb.save(out_xlsx)
+            self._log(f"✅  xlsx 저장: {os.path.basename(out_xlsx)}")
+
+            # ── ② CSV 저장 (배송순서, 이름, 택배받을 주소, Latitude, Longitude) ──
+            csv_cols = ['배송순서', '이름', '택배받을 주소', 'Latitude', 'Longitude']
+
+            df_out = df.copy()
+            df_out['배송순서'] = df_out.index.map(mapping)
+            df_out = df_out.dropna(subset=['배송순서'])
+            df_out['배송순서'] = df_out['배송순서'].astype(int)
+            df_out = df_out.sort_values('배송순서').reset_index(drop=True)
+
+            # 없는 열은 빈 값으로
+            for c in csv_cols:
+                if c not in df_out.columns:
+                    df_out[c] = ''
+
+            out_csv = f"{base}_배송순서완성.csv"
+            df_out[csv_cols].to_csv(out_csv, index=False, encoding='utf-8-sig')
+            self._log(f"✅  csv 저장: {os.path.basename(out_csv)}")
+
+            return out_xlsx
         except Exception as e:
             self._log(f"❌  저장 실패: {e}")
             return None
