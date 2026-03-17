@@ -24,9 +24,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # --onedir : 폴더 형태로 빌드 (--onefile 대비 첫 실행 속도 정상)
-      # --collect-all ortools : OR-Tools 네이티브 DLL 전체 포함
-      # 한글 파일명 빌드 시 인코딩 오류 방지 → 영문명으로 빌드 후 rename
       - name: Build executable
         run: |
           pyinstaller `
@@ -34,13 +31,16 @@ jobs:
             --windowed `
             --add-data "src/core;core" `
             --collect-all ortools `
+            --collect-all pywebview `
+            --hidden-import pywebview.platforms.winforms `
+            --hidden-import multiprocessing.spawn `
+            --hidden-import multiprocessing.forkserver `
             --name "DeliveryRouteOptimizer" `
             src/app.py
 
       - name: Verify build output
         run: dir dist\DeliveryRouteOptimizer
 
-      # 폴더를 zip으로 압축 → 사용자는 zip 받아서 압축 해제 후 .exe 실행
       - name: Package dist folder as zip
         run: |
           Compress-Archive `
