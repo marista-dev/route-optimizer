@@ -3,57 +3,51 @@ name: Build Windows Executable
 on:
   push:
     tags:
-      - "v*"          # v1.0.0 처럼 버전 태그를 push 하면 자동 빌드
+      - "v*"
 
 permissions:
-  contents: write    # Release 생성 및 파일 업로드 권한
+  contents: write
 
 jobs:
   build:
-    runs-on: windows-latest   # Windows 환경에서 빌드 (필수)
+    runs-on: windows-latest
 
     steps:
-      # 1. 코드 체크아웃
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Python 설치
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 3. 의존성 설치
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 4. PyInstaller로 .exe 빌드
-      #    --onefile  : 단일 실행 파일
-      #    --windowed : 콘솔 창 없이 실행
-      #    --add-data : core 모듈 포함
-      #    --name     : 출력 파일명
+      # --onedir : 폴더 형태로 빌드 (--onefile 대비 첫 실행 속도 정상)
+      # --collect-all ortools : OR-Tools 네이티브 DLL 전체 포함
+      # 한글 파일명 빌드 시 인코딩 오류 방지 → 영문명으로 빌드 후 rename
       - name: Build executable
         run: |
           pyinstaller `
-            --onefile `
+            --onedir `
             --windowed `
             --add-data "src/core;core" `
             --collect-all ortools `
-            --hidden-import ortools.constraint_solver.pywrapcp `
-            --hidden-import ortools.constraint_solver._pywrapcp `
-            --hidden-import ortools.constraint_solver.routing_enums_pb2 `
-            --name "배송경로자동정리" `
+            --name "DeliveryRouteOptimizer" `
             src/app.py
 
-      # 5. 빌드 결과물 확인
       - name: Verify build output
-        run: |
-          dir dist
-          echo "Build successful"
+        run: dir dist\DeliveryRouteOptimizer
 
-      # 6. GitHub Release 생성 + .exe 업로드
-      #    태그명이 Release 버전명이 됨 (예: v1.0.0)
-      - name: Create GitHub Release and upload .exe
+      # 폴더를 zip으로 압축 → 사용자는 zip 받아서 압축 해제 후 .exe 실행
+      - name: Package dist folder as zip
+        run: |
+          Compress-Archive `
+            -Path "dist\DeliveryRouteOptimizer" `
+            -DestinationPath "dist\route-optimizer.zip"
+
+      - name: Create GitHub Release and upload zip
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -61,13 +55,14 @@ jobs:
           body: |
             ## 배송 경로 자동 정리 프로그램 ${{ github.ref_name }}
 
-            ### 사용 방법
-            1. 아래 **Assets** 에서 `배송경로자동정리.exe` 다운로드
-            2. 더블클릭으로 실행 (Python 설치 불필요)
-            3. 카카오 API 키 입력 → 출발지 주소 검색 → 엑셀 파일 선택 → 실행
+            ### 다운로드 및 실행 방법
+            1. 아래 **Assets** 에서 `route-optimizer.zip` 다운로드
+            2. 압축 해제 → `DeliveryRouteOptimizer` 폴더 안의 `DeliveryRouteOptimizer.exe` 실행
+            3. Python 설치 불필요
 
             ### 시스템 요구 사항
             - Windows 10 / 11 (64-bit)
-          files: dist/배송경로자동정리.exe
+            - 인터넷 연결 필수 (카카오 API 사용)
+          files: dist/route-optimizer.zip
           draft: false
           prerelease: false

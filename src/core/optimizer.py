@@ -1,9 +1,6 @@
 """
 optimizer.py
 카카오 모빌리티 API + OR-Tools (SAVINGS + GLS) 배송 순서 최적화
-  - build_time_matrix : N×N 자동차 주행 시간 행렬 구축 (체크포인트 지원)
-  - optimize_route    : Open TSP 풀이 → 배송 node index 순서 반환
-  - clear_checkpoint  : 새 작업 전 체크포인트 초기화
 """
 
 import json
@@ -13,9 +10,7 @@ import requests
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
-
-# 체크포인트를 %APPDATA% 에 저장 (exe 환경에서 경로 안전)
-_CHECKPOINT_DIR  = os.path.join(
+_CHECKPOINT_DIR = os.path.join(
     os.environ.get('APPDATA', os.path.expanduser('~')),
     'RouteOptimizer'
 )
@@ -53,26 +48,15 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
     return 999_999
 
 
-def build_time_matrix(nodes: list, headers: dict,
-                      progress_cb=None) -> list:
-    """
-    Parameters
-    ----------
-    nodes       : [{'name', 'lat', 'lon', 'id'}, ...]  (0번 = 출발지)
-    headers     : 카카오 API Authorization 헤더
-    progress_cb : callable(done: int, total: int) | None
-
-    Returns
-    -------
-    num_nodes × num_nodes 정수 행렬 (초 단위)
-    """
+def build_time_matrix(nodes: list, headers: dict, progress_cb=None) -> list:
     n      = len(nodes)
     matrix = [[None] * n for _ in range(n)]
 
-    # 체크포인트 복구
+    # 체크포인트 복구 — with 구문으로 파일 핸들 명시적 닫기
     if os.path.exists(CHECKPOINT_FILE):
         try:
-            saved = json.load(open(CHECKPOINT_FILE, encoding='utf-8'))
+            with open(CHECKPOINT_FILE, encoding='utf-8') as f:
+                saved = json.load(f)
             if len(saved) == n and len(saved[0]) == n:
                 matrix = saved
         except Exception:
@@ -104,26 +88,17 @@ def build_time_matrix(nodes: list, headers: dict,
     return matrix
 
 
-def optimize_route(nodes: list, time_matrix: list) -> list | None:
-    """
-    SAVINGS 초기해 + GLS 180 초 개선.
-    출발지(index 0) 미복귀 Open TSP.
-
-    Returns
-    -------
-    배송 순서대로 정렬된 node index 리스트 (출발지 제외) or None
-    """
-    n         = len(nodes)
-    dummy     = n
-    ext_n     = n + 1
-    ext       = [[0] * ext_n for _ in range(ext_n)]
+def optimize_route(nodes: list, time_matrix: list):
+    n     = len(nodes)
+    dummy = n
+    ext   = [[0] * (n + 1) for _ in range(n + 1)]
 
     for i in range(n):
         for j in range(n):
             ext[i][j] = time_matrix[i][j]
-        ext[i][dummy] = 0   # 어느 지점에서도 무비용으로 종료
+        ext[i][dummy] = 0
 
-    manager = pywrapcp.RoutingIndexManager(ext_n, 1, [0], [dummy])
+    manager = pywrapcp.RoutingIndexManager(n + 1, 1, [0], [dummy])
     routing = pywrapcp.RoutingModel(manager)
 
     def _cost(fi, ti):
