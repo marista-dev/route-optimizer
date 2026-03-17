@@ -76,6 +76,15 @@ new kakao.Postcode({
 
 
 def _postcode_worker(queue, title):
+    import sys
+    import os
+
+    # --windowed exe 환경: stdout/stderr 가 None → devnull 로 리다이렉트
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
+
     import pywebview
     _result = {}
 
