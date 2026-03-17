@@ -153,4 +153,43 @@ def optimize_route(nodes: list, time_matrix: list):
         if node != 0 and node != dummy:
             order.append(node)
         idx = sol.Value(routing.NextVar(idx))
-    return order
+
+    return _group_same_location(order, nodes)
+
+
+def _group_same_location(order: list, nodes: list) -> list:
+    """
+    OR-Tools 결과에서 동일 좌표(같은 건물/주소) 노드를 연속 배치하는 후처리.
+
+    알고리즘:
+    1. 순서대로 순회하면서 각 노드의 좌표 키를 확인
+    2. 이미 결과에 포함된 좌표 그룹이 있으면 해당 노드 바로 뒤에 삽입
+    3. 새 좌표면 결과 끝에 추가
+
+    효과: 양산택지로118처럼 같은 주소가 5번, 8번 떨어져 있어도
+          5번 → 6번(바로 뒤)으로 연속 배치됨
+    """
+    def _coord_key(node_idx: int) -> tuple:
+        """소수점 5자리 반올림으로 '사실상 같은 위치' 판정 (약 1m 이내)"""
+        n = nodes[node_idx]
+        return (round(n['lat'], 5), round(n['lon'], 5))
+
+    result   = []
+    seen_pos = {}  # coord_key → result 내 마지막 삽입 위치 인덱스
+
+    for node_idx in order:
+        key = _coord_key(node_idx)
+        if key in seen_pos:
+            # 동일 좌표 그룹의 마지막 항목 바로 뒤에 삽입
+            insert_at = seen_pos[key] + 1
+            result.insert(insert_at, node_idx)
+            # 삽입으로 인해 뒤에 있는 seen_pos 값들을 +1 보정
+            for k in seen_pos:
+                if seen_pos[k] >= insert_at and k != key:
+                    seen_pos[k] += 1
+            seen_pos[key] = insert_at
+        else:
+            seen_pos[key] = len(result)
+            result.append(node_idx)
+
+    return result
