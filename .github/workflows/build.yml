@@ -38,6 +38,10 @@ jobs:
             --onefile `
             --windowed `
             --add-data "src/core;core" `
+            --collect-all ortools `
+            --hidden-import ortools.constraint_solver.pywrapcp `
+            --hidden-import ortools.constraint_solver._pywrapcp `
+            --hidden-import ortools.constraint_solver.routing_enums_pb2 `
             --name "배송경로자동정리" `
             src/app.py
 
