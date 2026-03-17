@@ -1,13 +1,20 @@
 """
 app.py — 배송 경로 자동 정리 프로그램
 디자인: 화이트 베이스 + 블루 포인트 / 라운드 / 클린 모던
+
+주소 검색: 카카오 우편번호 서비스
+  → 로컬 HTTP 서버(랜덤 포트) + 시스템 브라우저 방식
+  → pywebview / multiprocessing 미사용 (exe 환경 완전 호환)
 """
 
-import multiprocessing
+import http.server
+import json
 import os
+import socket
 import sys
 import threading
 import time
+import webbrowser
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -18,96 +25,176 @@ BASE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from core.geocoder  import geocode, reverse_geocode, verify_address
-from core.optimizer import (build_time_matrix, optimize_route,
-                             clear_checkpoint, CHECKPOINT_FILE)
+from core.optimizer import build_time_matrix, optimize_route, clear_checkpoint
 
 # ── 디자인 토큰 ───────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
 
-_BG       = "#F7F9FC"   # 앱 배경 (아주 연한 회청)
-_WHITE    = "#FFFFFF"   # 카드 배경
-_BLUE     = "#2563EB"   # 메인 포인트 블루
-_BLUE_LT  = "#EFF6FF"   # 연한 블루 (입력 포커스 배경)
-_BLUE_MID = "#DBEAFE"   # 중간 블루 (선택 배경)
-_BORDER   = "#E2E8F0"   # 테두리
-_TEXT     = "#1E293B"   # 기본 텍스트
-_SUBTEXT  = "#64748B"   # 보조 텍스트
-_SUCCESS  = "#16A34A"   # 초록
-_WARN     = "#D97706"   # 노랑
-_DANGER   = "#DC2626"   # 빨강
-_SHADOW   = "#F1F5F9"   # 그림자 대용 배경
+_BG       = "#F7F9FC"
+_WHITE    = "#FFFFFF"
+_BLUE     = "#2563EB"
+_BLUE_LT  = "#EFF6FF"
+_BLUE_MID = "#DBEAFE"
+_BORDER   = "#E2E8F0"
+_TEXT     = "#1E293B"
+_SUBTEXT  = "#64748B"
+_SUCCESS  = "#16A34A"
+_WARN     = "#D97706"
+_DANGER   = "#DC2626"
+_SHADOW   = "#F1F5F9"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 카카오 우편번호 서비스 HTML
+# 카카오 우편번호 — 로컬 HTTP 서버 + 시스템 브라우저
 # ─────────────────────────────────────────────────────────────────────────────
-_POSTCODE_HTML = """<!DOCTYPE html>
-<html>
+def _get_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
+
+
+def _make_postcode_html(port: int) -> str:
+    """
+    카카오 우편번호 embed 페이지.
+    주소 선택 시 localhost:<port>/result 로 POST 전송.
+    전송 완료 후 브라우저 창 자동 닫기 안내 표시.
+    """
+    return f"""<!DOCTYPE html>
+<html lang="ko">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주소 검색</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { width:100%; height:100vh; overflow:hidden; background:#fff; }
-  #wrap { width:100%; height:100%; }
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family: 'Malgun Gothic', sans-serif; background:#F7F9FC; }}
+  #header {{
+    background:#2563EB; color:#fff;
+    padding:14px 20px;
+    font-size:15px; font-weight:700;
+    display:flex; align-items:center; gap:8px;
+  }}
+  #wrap {{ width:100%; height:calc(100vh - 52px); }}
+  #done {{
+    display:none; position:fixed; inset:0;
+    background:rgba(255,255,255,0.95);
+    flex-direction:column; align-items:center; justify-content:center;
+    gap:12px;
+  }}
+  #done .icon {{ font-size:48px; }}
+  #done .msg  {{ font-size:17px; font-weight:700; color:#1E293B; }}
+  #done .sub  {{ font-size:13px; color:#64748B; }}
+  #done .close-btn {{
+    margin-top:8px; padding:10px 28px;
+    background:#2563EB; color:#fff;
+    border:none; border-radius:8px;
+    font-size:14px; font-weight:600; cursor:pointer;
+  }}
 </style>
 <script src="//t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 </head>
 <body>
+<div id="header">🔍&nbsp; 주소 검색 — 원하는 주소를 선택하세요</div>
 <div id="wrap"></div>
+<div id="done">
+  <div class="icon">✅</div>
+  <div class="msg">주소가 선택되었습니다</div>
+  <div class="sub">이 창을 닫아주세요</div>
+  <button class="close-btn" onclick="window.close()">창 닫기</button>
+</div>
 <script>
-new kakao.Postcode({
-  oncomplete: function(data) {
+new kakao.Postcode({{
+  oncomplete: function(data) {{
     var addr = (data.userSelectedType === 'R') ? data.roadAddress : data.jibunAddress;
     var extra = '';
-    if (data.userSelectedType === 'R') {
-      if (data.bname !== '' && /[동로가]$/.test(data.bname)) extra += data.bname;
+    if (data.userSelectedType === 'R') {{
+      if (data.bname !== '' && /[\ub3d9\ub85c\uac00]$/.test(data.bname))
+        extra += data.bname;
       if (data.buildingName !== '' && data.apartment === 'Y')
-        extra += (extra !== '' ? ', ' : '') + data.buildingName;
-      if (extra !== '') extra = ' (' + extra + ')';
-    }
-    window.pywebview.api.on_select(addr + extra, data.zonecode);
-  },
-  width:'100%', height:'100%'
-}).embed(document.getElementById('wrap'));
+        extra += (extra ? ', ' : '') + data.buildingName;
+      if (extra) extra = ' (' + extra + ')';
+    }}
+    var payload = JSON.stringify({{ address: addr + extra, zonecode: data.zonecode }});
+    fetch('http://localhost:{port}/result', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: payload
+    }}).then(function() {{
+      document.getElementById('wrap').style.display = 'none';
+      document.getElementById('done').style.display = 'flex';
+    }}).catch(function(e) {{
+      alert('오류가 발생했습니다: ' + e);
+    }});
+  }},
+  width: '100%',
+  height: '100%'
+}}).embed(document.getElementById('wrap'));
 </script>
 </body>
 </html>"""
 
 
-def _postcode_worker(queue, title):
-    import sys
-    import os
+def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
+    """
+    로컬 HTTP 서버를 열고 시스템 브라우저로 카카오 우편번호 페이지를 표시.
+    사용자가 주소를 선택하면 {'address': str, 'zonecode': str} 반환.
+    취소/타임아웃 시 {} 반환.
+    """
+    port   = _get_free_port()
+    result = {}
+    done   = threading.Event()
 
-    # --windowed exe 환경: stdout/stderr 가 None → devnull 로 리다이렉트
-    if sys.stdout is None:
-        sys.stdout = open(os.devnull, 'w')
-    if sys.stderr is None:
-        sys.stderr = open(os.devnull, 'w')
+    html_bytes = _make_postcode_html(port).encode('utf-8')
 
-    import pywebview
-    _result = {}
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(html_bytes)))
+            self.end_headers()
+            self.wfile.write(html_bytes)
 
-    class _Api:
-        def on_select(self, address, zonecode):
-            _result['address'] = address
-            _result['zonecode'] = zonecode
-            _win.destroy()
+        def do_POST(self):
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body   = self.rfile.read(length)
+                data   = json.loads(body)
+                result.update(data)
+            except Exception:
+                pass
+            # CORS 허용 (브라우저에서 localhost POST)
+            self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            done.set()
 
-    _api = _Api()
-    _win = pywebview.create_window(
-        title, html=_POSTCODE_HTML, js_api=_api,
-        width=520, height=620, on_top=True)
-    pywebview.start()
-    queue.put(_result)
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
 
+        def log_message(self, *_):
+            pass  # 로그 억제
 
-def _open_postcode(title="주소 검색"):
-    q = multiprocessing.Queue()
-    p = multiprocessing.Process(target=_postcode_worker, args=(q, title))
-    p.start()
-    p.join()
-    return q.get() if not q.empty() else {}
+    server = http.server.HTTPServer(('localhost', port), _Handler)
+    server.timeout = 1  # handle_request 블로킹 최대 1초
+
+    def _serve():
+        while not done.is_set():
+            server.handle_request()
+        server.server_close()
+
+    t = threading.Thread(target=_serve, daemon=True)
+    t.start()
+
+    webbrowser.open(f'http://localhost:{port}')
+    done.wait(timeout=timeout)
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,18 +233,18 @@ class AddressSearchDialog(ctk.CTkToplevel):
         self._build()
 
     def _build(self):
-        card = _card(self)
+        card  = _card(self)
         card.pack(fill="both", expand=True, padx=18, pady=18)
-
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=20, pady=18)
 
         ctk.CTkLabel(inner, text="🏢  출발 창고 / 사무실 주소",
                      font=ctk.CTkFont(size=14, weight="bold"),
                      text_color=_TEXT).pack(anchor="w", pady=(0, 2))
-        ctk.CTkLabel(inner, text="카카오 우편번호 검색으로 정확한 주소를 찾습니다",
-                     font=ctk.CTkFont(size=11),
-                     text_color=_SUBTEXT).pack(anchor="w", pady=(0, 14))
+        ctk.CTkLabel(inner,
+                     text="버튼을 누르면 브라우저에서 카카오 주소 검색이 열립니다",
+                     font=ctk.CTkFont(size=11), text_color=_SUBTEXT).pack(
+            anchor="w", pady=(0, 14))
 
         self.search_btn = ctk.CTkButton(
             inner, text="🔍   주소 검색 창 열기",
@@ -172,26 +259,27 @@ class AddressSearchDialog(ctk.CTkToplevel):
                                    text_color=_SUBTEXT, wraplength=380)
         self.status.pack(anchor="w", pady=(0, 10))
 
-        btn_row = ctk.CTkFrame(inner, fg_color="transparent")
-        btn_row.pack(fill="x")
+        row = ctk.CTkFrame(inner, fg_color="transparent")
+        row.pack(fill="x")
         self.ok_btn = ctk.CTkButton(
-            btn_row, text="확인", height=38, corner_radius=10,
+            row, text="확인", height=38, corner_radius=10,
             fg_color=_BLUE, hover_color="#1D4ED8",
             state="disabled", command=self._confirm)
         self.ok_btn.pack(side="left", expand=True, padx=(0, 6))
-        ctk.CTkButton(btn_row, text="닫기", height=38, corner_radius=10,
+        ctk.CTkButton(row, text="닫기", height=38, corner_radius=10,
                       fg_color=_BORDER, hover_color="#CBD5E1",
                       text_color=_TEXT,
                       command=self.destroy).pack(side="left", expand=True)
 
     def _launch(self):
-        self.search_btn.configure(state="disabled", text="⏳  열리는 중...")
-        self.status.configure(text="카카오 우편번호 검색 창이 열립니다...",
+        self.search_btn.configure(state="disabled",
+                                  text="⏳  브라우저에서 주소를 선택해주세요...")
+        self.status.configure(text="브라우저에서 주소를 선택하면 자동으로 반영됩니다",
                               text_color=_SUBTEXT)
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        raw = _open_postcode("출발지 주소 찾기")
+        raw = open_postcode_browser("출발지 주소 찾기")
         if raw.get('address'):
             geo = geocode(raw['address'], self.headers)
             if geo:
@@ -217,7 +305,7 @@ class AddressSearchDialog(ctk.CTkToplevel):
                                   text="🔍   주소 검색 창 열기")
 
     def _on_cancel(self):
-        self.status.configure(text="검색을 취소했습니다",
+        self.status.configure(text="검색을 취소했거나 시간이 초과됐습니다",
                               text_color=_SUBTEXT)
         self.search_btn.configure(state="normal",
                                   text="🔍   주소 검색 창 열기")
@@ -239,7 +327,7 @@ class AddressFixDialog(ctk.CTkToplevel):
         self.result_holder = result_holder
         self._pending      = None
         self.title("주소 확인 필요")
-        self.geometry("520x440")
+        self.geometry("520x430")
         self.resizable(False, False)
         self.configure(fg_color=_BG)
         self.grab_set()
@@ -247,12 +335,12 @@ class AddressFixDialog(ctk.CTkToplevel):
         self._build(name, orig, rev)
 
     def _build(self, name, orig, rev):
-        card = _card(self)
+        card  = _card(self)
         card.pack(fill="both", expand=True, padx=18, pady=18)
 
-        # 경고 헤더 (카드 안)
+        # 경고 배너
         top = ctk.CTkFrame(card, fg_color="#FEF2F2",
-                           corner_radius=10, height=48)
+                           corner_radius=10, height=44)
         top.pack(fill="x", padx=14, pady=(14, 0))
         top.pack_propagate(False)
         ctk.CTkLabel(top, text="⚠️   주소 불일치 감지 — 확인이 필요합니다",
@@ -264,7 +352,7 @@ class AddressFixDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(inner, text=f"수령인:  {name}",
                      font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=_TEXT).pack(anchor="w", pady=(0, 10))
+                     text_color=_TEXT).pack(anchor="w", pady=(0, 8))
 
         for icon, label, text, bg in [
             ("📋", "엑셀 입력 주소",  orig,                    _BLUE_LT),
@@ -280,7 +368,7 @@ class AddressFixDialog(ctk.CTkToplevel):
                          text_color=_TEXT).pack(fill="x", pady=(2, 8))
 
         self.search_btn = ctk.CTkButton(
-            inner, text="🔍   올바른 주소 검색",
+            inner, text="🔍   올바른 주소 검색 (브라우저에서 열림)",
             height=40, corner_radius=10,
             fg_color=_BLUE, hover_color="#1D4ED8",
             font=ctk.CTkFont(size=12, weight="bold"),
@@ -292,26 +380,27 @@ class AddressFixDialog(ctk.CTkToplevel):
                                         text_color=_SUBTEXT, wraplength=460)
         self.verify_lbl.pack(anchor="w", pady=(0, 8))
 
-        btn_row = ctk.CTkFrame(inner, fg_color="transparent")
-        btn_row.pack(fill="x")
+        row = ctk.CTkFrame(inner, fg_color="transparent")
+        row.pack(fill="x")
         self.ok_btn = ctk.CTkButton(
-            btn_row, text="✅  이 주소로 수정",
+            row, text="✅  이 주소로 수정",
             height=38, corner_radius=10,
             fg_color=_BLUE, hover_color="#1D4ED8",
             state="disabled", command=self._confirm)
         self.ok_btn.pack(side="left", expand=True, padx=(0, 6))
-        ctk.CTkButton(btn_row, text="원본 그대로 사용",
+        ctk.CTkButton(row, text="원본 그대로 사용",
                        height=38, corner_radius=10,
                        fg_color=_BORDER, hover_color="#CBD5E1",
                        text_color=_TEXT,
                        command=self._skip).pack(side="left", expand=True)
 
     def _launch(self):
-        self.search_btn.configure(state="disabled", text="⏳  열리는 중...")
+        self.search_btn.configure(state="disabled",
+                                  text="⏳  브라우저에서 주소를 선택해주세요...")
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        raw = _open_postcode("올바른 주소 찾기")
+        raw = open_postcode_browser("올바른 주소 찾기")
         if raw.get('address'):
             geo = geocode(raw['address'], self.headers)
             if geo:
@@ -329,22 +418,21 @@ class AddressFixDialog(ctk.CTkToplevel):
     def _on_success(self, verdict, addr):
         color = _SUCCESS if verdict == '일치' else _WARN
         icon  = "✅" if verdict == '일치' else "⚠️"
-        self.verify_lbl.configure(
-            text=f"{icon}  선택된 주소: {addr}", text_color=color)
+        self.verify_lbl.configure(text=f"{icon}  선택된 주소: {addr}",
+                                   text_color=color)
         self.ok_btn.configure(state="normal")
-        self.search_btn.configure(state="normal",
-                                  text="🔍   올바른 주소 검색")
+        self.search_btn.configure(
+            state="normal", text="🔍   올바른 주소 검색 (브라우저에서 열림)")
 
     def _on_fail(self):
-        self.verify_lbl.configure(
-            text="⚠️  좌표 변환 실패", text_color=_WARN)
-        self.search_btn.configure(state="normal",
-                                  text="🔍   올바른 주소 검색")
+        self.verify_lbl.configure(text="⚠️  좌표 변환 실패", text_color=_WARN)
+        self.search_btn.configure(
+            state="normal", text="🔍   올바른 주소 검색 (브라우저에서 열림)")
 
     def _on_cancel(self):
         self.verify_lbl.configure(text="검색 취소됨", text_color=_SUBTEXT)
-        self.search_btn.configure(state="normal",
-                                  text="🔍   올바른 주소 검색")
+        self.search_btn.configure(
+            state="normal", text="🔍   올바른 주소 검색 (브라우저에서 열림)")
 
     def _confirm(self):
         if self._pending:
@@ -370,16 +458,14 @@ class DoneDialog(ctk.CTkToplevel):
         self.configure(fg_color=_BG)
         self.grab_set()
 
-        card = _card(self)
+        card  = _card(self)
         card.pack(fill="both", expand=True, padx=18, pady=18)
-
         inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # 성공 배지
         badge = ctk.CTkFrame(inner, fg_color="#DCFCE7",
-                              corner_radius=20, height=36, width=140)
-        badge.pack(pady=(0, 12))
+                              corner_radius=20, height=34, width=130)
+        badge.pack(pady=(0, 10))
         badge.pack_propagate(False)
         ctk.CTkLabel(badge, text="✅  작업 완료",
                      font=ctk.CTkFont(size=12, weight="bold"),
@@ -398,17 +484,17 @@ class DoneDialog(ctk.CTkToplevel):
         if warn_cnt:
             ctk.CTkLabel(inner,
                          text=f"⚠️  주소 미수정 {warn_cnt}건 — '주소검증결과' 열 확인",
-                         font=ctk.CTkFont(size=11),
-                         text_color=_WARN).pack(pady=(0, 6))
+                         font=ctk.CTkFont(size=11), text_color=_WARN).pack(
+                pady=(0, 6))
 
-        btn_row = ctk.CTkFrame(inner, fg_color="transparent")
-        btn_row.pack(fill="x")
-        ctk.CTkButton(btn_row, text="📂  저장 폴더 열기",
+        row = ctk.CTkFrame(inner, fg_color="transparent")
+        row.pack(fill="x")
+        ctk.CTkButton(row, text="📂  저장 폴더 열기",
                       height=40, corner_radius=10,
                       fg_color=_BLUE, hover_color="#1D4ED8",
                       command=lambda: self._open(folder)).pack(
             side="left", expand=True, padx=(0, 6))
-        ctk.CTkButton(btn_row, text="닫기", height=40, corner_radius=10,
+        ctk.CTkButton(row, text="닫기", height=40, corner_radius=10,
                       fg_color=_BORDER, hover_color="#CBD5E1",
                       text_color=_TEXT,
                       command=self.destroy).pack(side="left", expand=True)
@@ -441,22 +527,17 @@ class App(ctk.CTk):
 
         self._build_ui()
 
-    # ── UI ───────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        # ── 헤더 ─────────────────────────────────────────────────────────────
-        hdr = ctk.CTkFrame(self, fg_color=_WHITE,
-                           corner_radius=0, height=68)
+        # 헤더
+        hdr = ctk.CTkFrame(self, fg_color=_WHITE, corner_radius=0, height=68)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-
-        # 헤더 하단 그림자 라인
         ctk.CTkFrame(self, fg_color=_BORDER, height=1,
                      corner_radius=0).pack(fill="x")
 
         hdr_inner = ctk.CTkFrame(hdr, fg_color="transparent")
         hdr_inner.place(relx=0.5, rely=0.5, anchor="center")
 
-        # 아이콘 배지
         icon_bg = ctk.CTkFrame(hdr_inner, fg_color=_BLUE_MID,
                                 corner_radius=10, width=38, height=38)
         icon_bg.pack(side="left", padx=(0, 12))
@@ -473,7 +554,7 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=11),
                      text_color=_SUBTEXT).pack(anchor="w")
 
-        # ── 스크롤 본문 ───────────────────────────────────────────────────────
+        # 스크롤 본문
         body = ctk.CTkScrollableFrame(
             self, fg_color=_BG,
             scrollbar_fg_color=_BG,
@@ -481,35 +562,30 @@ class App(ctk.CTk):
             scrollbar_button_hover_color="#CBD5E1")
         body.pack(fill="both", expand=True)
 
-        G = {"padx": 20, "pady": 6}   # 카드 간격
+        G = {"padx": 20, "pady": 6}
 
-        # ① API 키 카드
-        c1 = _card(body)
-        c1.pack(fill="x", **G)
+        # ① API 키
+        c1 = _card(body); c1.pack(fill="x", **G)
         i1 = ctk.CTkFrame(c1, fg_color="transparent")
         i1.pack(fill="x", padx=20, pady=18)
         _label_sm(i1, "① 카카오 REST API 키")
         self.api_entry = ctk.CTkEntry(
-            i1,
-            placeholder_text="카카오 REST API 키를 입력하세요",
+            i1, placeholder_text="카카오 REST API 키를 입력하세요",
             height=42, corner_radius=10, show="*",
             fg_color=_SHADOW, border_color=_BORDER, border_width=1,
             text_color=_TEXT, placeholder_text_color="#94A3B8",
             font=ctk.CTkFont(size=12))
         self.api_entry.pack(fill="x")
 
-        # ② 출발지 카드
-        c2 = _card(body)
-        c2.pack(fill="x", **G)
+        # ② 출발지
+        c2 = _card(body); c2.pack(fill="x", **G)
         i2 = ctk.CTkFrame(c2, fg_color="transparent")
         i2.pack(fill="x", padx=20, pady=18)
         _label_sm(i2, "② 출발 창고 / 사무실 주소")
-
         row2 = ctk.CTkFrame(i2, fg_color="transparent")
         row2.pack(fill="x")
         self.addr_entry = ctk.CTkEntry(
-            row2,
-            placeholder_text="[주소 찾기]를 눌러 검색하세요",
+            row2, placeholder_text="[주소 찾기]를 눌러 검색하세요",
             height=42, corner_radius=10, state="disabled",
             fg_color=_SHADOW, border_color=_BORDER, border_width=1,
             text_color=_TEXT, placeholder_text_color="#94A3B8",
@@ -520,19 +596,16 @@ class App(ctk.CTk):
                       fg_color=_BLUE, hover_color="#1D4ED8",
                       font=ctk.CTkFont(size=12, weight="bold"),
                       command=self._find_origin).pack(side="left")
-
         self.addr_ok = ctk.CTkLabel(i2, text="",
                                      font=ctk.CTkFont(size=11),
                                      text_color=_SUCCESS)
         self.addr_ok.pack(anchor="w", pady=(6, 0))
 
-        # ③ 파일 카드
-        c3 = _card(body)
-        c3.pack(fill="x", **G)
+        # ③ 파일
+        c3 = _card(body); c3.pack(fill="x", **G)
         i3 = ctk.CTkFrame(c3, fg_color="transparent")
         i3.pack(fill="x", padx=20, pady=18)
         _label_sm(i3, "③ 배송 목록 엑셀 파일 (.xlsx)")
-
         row3 = ctk.CTkFrame(i3, fg_color="transparent")
         row3.pack(fill="x")
         ctk.CTkButton(row3, text="📁 파일 선택",
@@ -548,76 +621,63 @@ class App(ctk.CTk):
             wraplength=440, anchor="w")
         self.file_lbl.pack(side="left", fill="x", expand=True)
 
-        # ── 실행 / 중단 버튼 ──────────────────────────────────────────────────
-        btn_frame = ctk.CTkFrame(body, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=10)
-
+        # 실행 / 중단 버튼
+        bf = ctk.CTkFrame(body, fg_color="transparent")
+        bf.pack(fill="x", padx=20, pady=10)
         self.run_btn = ctk.CTkButton(
-            btn_frame, text="▶   배송 순서 자동 정리 시작",
+            bf, text="▶   배송 순서 자동 정리 시작",
             height=52, corner_radius=12,
             fg_color=_BLUE, hover_color="#1D4ED8",
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._start)
         self.run_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
-
         self.stop_btn = ctk.CTkButton(
-            btn_frame, text="⏹",
-            height=52, width=64, corner_radius=12,
+            bf, text="⏹", height=52, width=64, corner_radius=12,
             fg_color="#FEF2F2", hover_color="#FEE2E2",
-            text_color=_DANGER, border_width=1,
-            border_color="#FECACA",
-            font=ctk.CTkFont(size=20),
-            state="disabled",
+            text_color=_DANGER, border_width=1, border_color="#FECACA",
+            font=ctk.CTkFont(size=20), state="disabled",
             command=self._request_stop)
         self.stop_btn.pack(side="left")
 
-        # ── 진행 상황 카드 ─────────────────────────────────────────────────────
-        c4 = _card(body)
-        c4.pack(fill="x", **G)
+        # 진행 상황 카드
+        c4 = _card(body); c4.pack(fill="x", **G)
         i4 = ctk.CTkFrame(c4, fg_color="transparent")
         i4.pack(fill="x", padx=20, pady=18)
 
-        # 진행 상태 행
-        step_row = ctk.CTkFrame(i4, fg_color="transparent")
-        step_row.pack(fill="x", pady=(0, 6))
-        self.step_lbl = ctk.CTkLabel(
-            step_row, text="대기 중",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=_SUBTEXT)
+        sr = ctk.CTkFrame(i4, fg_color="transparent")
+        sr.pack(fill="x", pady=(0, 6))
+        self.step_lbl = ctk.CTkLabel(sr, text="대기 중",
+                                      font=ctk.CTkFont(size=12, weight="bold"),
+                                      text_color=_SUBTEXT)
         self.step_lbl.pack(side="left")
-        self.pct_lbl = ctk.CTkLabel(
-            step_row, text="",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=_BLUE)
+        self.pct_lbl = ctk.CTkLabel(sr, text="",
+                                     font=ctk.CTkFont(size=12, weight="bold"),
+                                     text_color=_BLUE)
         self.pct_lbl.pack(side="right")
 
-        self.bar = ctk.CTkProgressBar(
-            i4, height=6, corner_radius=4,
-            fg_color=_SHADOW, progress_color=_BLUE)
+        self.bar = ctk.CTkProgressBar(i4, height=6, corner_radius=4,
+                                       fg_color=_SHADOW,
+                                       progress_color=_BLUE)
         self.bar.pack(fill="x", pady=(0, 16))
         self.bar.set(0)
 
         _divider(i4)
         _label_sm(i4, "작업 현황")
-
         self.log = ctk.CTkTextbox(
             i4, height=240,
-            fg_color=_SHADOW, border_color=_BORDER,
-            border_width=1, corner_radius=10,
+            fg_color=_SHADOW, border_color=_BORDER, border_width=1,
+            corner_radius=10,
             font=ctk.CTkFont(family="맑은 고딕", size=11),
-            text_color=_TEXT,
-            state="disabled", wrap="word")
+            text_color=_TEXT, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True)
 
-        # 하단 여백
         ctk.CTkFrame(body, fg_color="transparent", height=16).pack()
 
     # ── 이벤트 ───────────────────────────────────────────────────────────────
     def _find_origin(self):
         k = self.api_entry.get().strip()
         if not k:
-            messagebox.showwarning("API 키 필요",
-                                   "먼저 카카오 API 키를 입력해주세요.")
+            messagebox.showwarning("API 키 필요", "먼저 카카오 API 키를 입력해주세요.")
             return
         dlg = AddressSearchDialog(self, {"Authorization": f"KakaoAK {k}"})
         self.wait_window(dlg)
@@ -628,16 +688,14 @@ class App(ctk.CTk):
             self.addr_entry.delete(0, "end")
             self.addr_entry.insert(0, r['address'])
             self.addr_entry.configure(state="disabled")
-            self.addr_ok.configure(
-                text=f"✅  확인된 주소: {r['address']}")
+            self.addr_ok.configure(text=f"✅  확인된 주소: {r['address']}")
 
     def _pick_file(self):
         p = filedialog.askopenfilename(
             filetypes=[("Excel 파일", "*.xlsx *.xls")])
         if p:
             self.file_path = p
-            self.file_lbl.configure(text=os.path.basename(p),
-                                    text_color=_TEXT)
+            self.file_lbl.configure(text=os.path.basename(p), text_color=_TEXT)
 
     def _start(self):
         if not self.api_entry.get().strip():
@@ -650,8 +708,7 @@ class App(ctk.CTk):
             messagebox.showwarning("입력 필요", "엑셀 파일을 선택해주세요.")
             return
         self._stop_evt.clear()
-        self.run_btn.configure(state="disabled",
-                               text="⏳  작업 진행 중...")
+        self.run_btn.configure(state="disabled", text="⏳  작업 진행 중...")
         self.stop_btn.configure(state="normal")
         self._clear_log()
         self.bar.set(0)
@@ -715,19 +772,16 @@ class App(ctk.CTk):
         try:
             # 1단계
             self._step("1단계 — 엑셀 파일 읽는 중", 0.05)
-            self._log("─" * 36)
-            self._log("  1단계   엑셀 파일 읽기")
+            self._log("─" * 36); self._log("  1단계   엑셀 파일 읽기")
             self._log("─" * 36)
             try:
                 df = pd.read_excel(self.file_path, header=0)
             except Exception as e:
                 self._log(f"❌  파일 읽기 실패: {e}")
                 self._reset_btn(); return
-
             if '택배받을 주소' not in df.columns:
                 self._log("❌  '택배받을 주소' 열이 없습니다.")
                 self._reset_btn(); return
-
             df = df.dropna(subset=['택배받을 주소'])
             df['택배받을 주소'] = df['택배받을 주소'].astype(str).str.strip()
             total = len(df)
@@ -736,8 +790,7 @@ class App(ctk.CTk):
 
             # 2단계
             self._step("2단계 — 배송지 위치 확인 중", 0.15)
-            self._log(f"\n{'─' * 36}")
-            self._log("  2단계   각 배송지 위치 확인")
+            self._log(f"\n{'─'*36}"); self._log("  2단계   각 배송지 위치 확인")
             self._log("─" * 36)
             lats, lons, k_addrs = [], [], []
             for i, (_, row) in enumerate(df.iterrows()):
@@ -754,7 +807,6 @@ class App(ctk.CTk):
                     self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 위치 못 찾음")
                 self._step("2단계 — 배송지 위치 확인 중",
                            0.15 + (i + 1) / total * 0.15)
-
             df['Latitude']      = lats
             df['Longitude']     = lons
             df['카카오_확인주소'] = k_addrs
@@ -763,11 +815,9 @@ class App(ctk.CTk):
 
             # 3단계
             self._step("3단계 — 주소 정확도 검사 중", 0.32)
-            self._log(f"\n{'─' * 36}")
-            self._log("  3단계   주소 정확도 검사")
+            self._log(f"\n{'─'*36}"); self._log("  3단계   주소 정확도 검사")
             self._log("─" * 36)
             revs, verdicts, fix_cnt = [], [], 0
-
             for i, (di, row) in enumerate(df.iterrows()):
                 if self._stopped(): self._abort(); return
                 lat, lon = row['Latitude'], row['Longitude']
@@ -778,7 +828,6 @@ class App(ctk.CTk):
                     verdict = verify_address(row['택배받을 주소'], rev)
                 else:
                     rev, verdict = '', '위치없음'
-
                 if verdict not in ('일치', '위치없음', '확인불가'):
                     self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 불일치 → 팝업 확인")
                     self._step("⚠️  불일치 — 팝업에서 주소를 검색해주세요",
@@ -801,15 +850,12 @@ class App(ctk.CTk):
                 else:
                     icon = "✅" if verdict == '일치' else "➖"
                     self._log(f"  {icon}  ({i+1}/{total})  {name}  — {verdict}")
-
                 revs.append(rev); verdicts.append(verdict)
                 self._step("3단계 — 주소 정확도 검사 중",
                            0.32 + (i + 1) / total * 0.13)
-
-            df['역지오코딩_주소'] = revs
-            df['주소검증결과']   = verdicts
+            df['역지오코딩_주소'] = revs; df['주소검증결과'] = verdicts
             warn_cnt = sum(1 for v in verdicts
-                           if v not in ('일치', '위치없음', '확인불가', '수정됨'))
+                           if v not in ('일치','위치없음','확인불가','수정됨'))
             self._log(f"\n✅  3단계 완료"
                       + (f"  — {fix_cnt}건 수정 / ⚠️ {warn_cnt}건 미수정"
                          if fix_cnt or warn_cnt else "  — 모두 정상"))
@@ -817,19 +863,15 @@ class App(ctk.CTk):
 
             # 4단계
             self._step("4단계 — 도로 이동 시간 계산 중 (시간 소요)", 0.46)
-            self._log(f"\n{'─' * 36}")
-            self._log("  4단계   도로 이동 시간 계산")
-            self._log("  배송지 수에 따라 10~15분 소요됩니다")
-            self._log("─" * 36)
-
+            self._log(f"\n{'─'*36}"); self._log("  4단계   도로 이동 시간 계산")
+            self._log("  배송지 수에 따라 10~15분 소요됩니다"); self._log("─" * 36)
             vdf   = df.dropna(subset=['Latitude', 'Longitude']).copy()
             nodes = [{'id': -1, 'name': '출발지',
                       'lat': self.start_lat, 'lon': self.start_lon}]
             for idx, row in vdf.iterrows():
                 nodes.append({'id': idx,
                               'name': row.get('이름', f'배송지{idx}'),
-                              'lat': row['Latitude'],
-                              'lon': row['Longitude']})
+                              'lat': row['Latitude'], 'lon': row['Longitude']})
 
             def _prog(done, tot):
                 if self._stopped(): return
@@ -846,27 +888,23 @@ class App(ctk.CTk):
 
             # 5단계
             self._step("5단계 — 최적 배송 순서 계산 중 (최대 3분)", 0.72)
-            self._log(f"\n{'─' * 36}")
-            self._log("  5단계   최적 배송 순서 계산  (최대 3분)")
+            self._log(f"\n{'─'*36}"); self._log("  5단계   최적 배송 순서 계산 (최대 3분)")
             self._log("─" * 36)
             ordered = optimize_route(nodes, matrix)
             if self._stopped(): self._abort(); return
             if ordered is None:
-                self._log("❌  순서 계산 실패")
-                self._reset_btn(); return
+                self._log("❌  순서 계산 실패"); self._reset_btn(); return
             mapping = {nodes[ni]['id']: step
                        for step, ni in enumerate(ordered, 1)}
             self._log(f"✅  5단계 완료 — {len(ordered)}건 순서 결정")
 
             # 6단계
             self._step("6단계 — 결과 파일 저장 중", 0.90)
-            self._log(f"\n{'─' * 36}")
-            self._log("  6단계   결과 파일 저장")
+            self._log(f"\n{'─'*36}"); self._log("  6단계   결과 파일 저장")
             self._log("─" * 36)
             out = self._save_xlsx(mapping)
             if out is None:
                 self._reset_btn(); return
-
             self._step("✅  모든 작업 완료!", 1.0, _SUCCESS)
             self._log(f"\n🎉  완료!")
             self._log(f"    파일명: {os.path.basename(out)}")
@@ -879,13 +917,11 @@ class App(ctk.CTk):
         finally:
             self._reset_btn()
 
-    # ── xlsx 저장 ─────────────────────────────────────────────────────────────
     def _save_xlsx(self, mapping: dict):
         try:
             wb   = load_workbook(self.file_path)
             ws   = wb.active
             hrow = [c.value for c in ws[1]]
-
             if '배송순서' in hrow:
                 col = hrow.index('배송순서') + 1
                 self._log("  '배송순서' 열 존재 → 덮어씁니다")
@@ -894,10 +930,8 @@ class App(ctk.CTk):
                 ws.cell(row=1, column=1, value='배송순서')
                 col = 1
                 self._log("  '배송순서' 열 없음 → 첫 번째 열에 추가")
-
             for df_idx, order_val in mapping.items():
                 ws.cell(row=df_idx + 2, column=col, value=order_val)
-
             base = os.path.splitext(self.file_path)[0]
             out  = f"{base}_배송순서완성.xlsx"
             wb.save(out)
@@ -909,5 +943,4 @@ class App(ctk.CTk):
 
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
     App().mainloop()

@@ -31,18 +31,8 @@ jobs:
             --windowed `
             --add-data "src/core;core" `
             --collect-all ortools `
-            --collect-all pywebview `
-            --hidden-import pywebview.platforms.winforms `
-            --hidden-import pywebview.platforms.cef `
-            --hidden-import pywebview.platforms.mshtml `
-            --hidden-import clr `
-            --hidden-import multiprocessing.spawn `
-            --hidden-import multiprocessing.forkserver `
-            --hidden-import multiprocessing.pool `
-            --hidden-import multiprocessing.managers `
-            --hidden-import multiprocessing.queues `
-            --collect-all clr_loader `
-            --collect-all pythonnet `
+            --hidden-import http.server `
+            --hidden-import webbrowser `
             --name "DeliveryRouteOptimizer" `
             src/app.py
 
