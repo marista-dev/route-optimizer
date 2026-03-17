@@ -11,6 +11,7 @@ import http.server
 import json
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -57,8 +58,7 @@ def _get_free_port() -> int:
 def _make_postcode_html(port: int) -> str:
     """
     카카오 우편번호 embed 페이지.
-    주소 선택 시 localhost:<port>/result 로 POST 전송.
-    전송 완료 후 브라우저 창 자동 닫기 안내 표시.
+    주소 선택 → localhost:<port>/result POST → 창 자동 닫기 시도.
     """
     return f"""<!DOCTYPE html>
 <html lang="ko">
@@ -71,26 +71,30 @@ def _make_postcode_html(port: int) -> str:
   body {{ font-family: 'Malgun Gothic', sans-serif; background:#F7F9FC; }}
   #header {{
     background:#2563EB; color:#fff;
-    padding:14px 20px;
-    font-size:15px; font-weight:700;
+    padding:14px 20px; font-size:15px; font-weight:700;
     display:flex; align-items:center; gap:8px;
   }}
   #wrap {{ width:100%; height:calc(100vh - 52px); }}
   #done {{
     display:none; position:fixed; inset:0;
-    background:rgba(255,255,255,0.95);
-    flex-direction:column; align-items:center; justify-content:center;
-    gap:12px;
+    background:#fff;
+    flex-direction:column; align-items:center; justify-content:center; gap:14px;
   }}
-  #done .icon {{ font-size:48px; }}
-  #done .msg  {{ font-size:17px; font-weight:700; color:#1E293B; }}
-  #done .sub  {{ font-size:13px; color:#64748B; }}
-  #done .close-btn {{
-    margin-top:8px; padding:10px 28px;
-    background:#2563EB; color:#fff;
-    border:none; border-radius:8px;
-    font-size:14px; font-weight:600; cursor:pointer;
+  .done-icon  {{ font-size:52px; }}
+  .done-msg   {{ font-size:18px; font-weight:700; color:#1E293B; }}
+  .done-sub   {{ font-size:13px; color:#64748B; }}
+  .done-kbd   {{
+    background:#F1F5F9; border:1px solid #CBD5E1;
+    border-radius:6px; padding:4px 10px;
+    font-size:13px; font-family:monospace; color:#475569;
   }}
+  .close-btn  {{
+    margin-top:4px; padding:10px 32px;
+    background:#2563EB; color:#fff; border:none;
+    border-radius:8px; font-size:14px; font-weight:600; cursor:pointer;
+  }}
+  .close-btn:hover {{ background:#1D4ED8; }}
+  .countdown  {{ font-size:12px; color:#94A3B8; }}
 </style>
 <script src="//t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 </head>
@@ -98,12 +102,18 @@ def _make_postcode_html(port: int) -> str:
 <div id="header">🔍&nbsp; 주소 검색 — 원하는 주소를 선택하세요</div>
 <div id="wrap"></div>
 <div id="done">
-  <div class="icon">✅</div>
-  <div class="msg">주소가 선택되었습니다</div>
-  <div class="sub">이 창을 닫아주세요</div>
-  <button class="close-btn" onclick="window.close()">창 닫기</button>
+  <div class="done-icon">✅</div>
+  <div class="done-msg">주소가 선택되었습니다</div>
+  <div class="done-sub">프로그램에 자동으로 반영됩니다</div>
+  <button class="close-btn" onclick="tryClose()">이 창 닫기</button>
+  <div class="countdown" id="cd"></div>
+  <div class="done-sub">창이 닫히지 않으면 <span class="done-kbd">Ctrl + W</span> 를 누르세요</div>
 </div>
 <script>
+function tryClose() {{
+  window.open('', '_self');
+  window.close();
+}}
 new kakao.Postcode({{
   oncomplete: function(data) {{
     var addr = (data.userSelectedType === 'R') ? data.roadAddress : data.jibunAddress;
@@ -123,21 +133,60 @@ new kakao.Postcode({{
     }}).then(function() {{
       document.getElementById('wrap').style.display = 'none';
       document.getElementById('done').style.display = 'flex';
+      // 3초 카운트다운 후 자동 닫기 시도
+      var n = 3;
+      var cd = document.getElementById('cd');
+      var t = setInterval(function() {{
+        cd.textContent = n + '초 후 자동으로 닫힙니다...';
+        if (n <= 0) {{ clearInterval(t); tryClose(); }}
+        n--;
+      }}, 1000);
     }}).catch(function(e) {{
       alert('오류가 발생했습니다: ' + e);
     }});
   }},
-  width: '100%',
-  height: '100%'
+  width: '100%', height: '100%'
 }}).embed(document.getElementById('wrap'));
 </script>
 </body>
 </html>"""
 
 
+def _open_browser_window(url: str) -> None:
+    """
+    Chrome/Edge를 새 창으로 열고 --window-size 옵션으로 크기 지정.
+    실패 시 webbrowser 모듈로 fallback.
+    """
+    w, h = 500, 680
+    candidates = [
+        # Windows Chrome
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        # Windows Edge
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        # macOS
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    ]
+    flags = [f"--new-window", f"--window-size={w},{h}",
+             "--window-position=400,100", url]
+    for exe in candidates:
+        if os.path.exists(exe):
+            try:
+                subprocess.Popen([exe] + flags,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                return
+            except Exception:
+                continue
+    # fallback: 기본 브라우저 새 창
+    webbrowser.open_new(url)
+
+
 def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
     """
-    로컬 HTTP 서버를 열고 시스템 브라우저로 카카오 우편번호 페이지를 표시.
+    로컬 HTTP 서버를 열고 새 브라우저 창으로 카카오 우편번호 페이지를 표시.
     사용자가 주소를 선택하면 {'address': str, 'zonecode': str} 반환.
     취소/타임아웃 시 {} 반환.
     """
@@ -192,7 +241,7 @@ def open_postcode_browser(title="주소 검색", timeout=180) -> dict:
     t = threading.Thread(target=_serve, daemon=True)
     t.start()
 
-    webbrowser.open(f'http://localhost:{port}')
+    _open_browser_window(f'http://localhost:{port}')
     done.wait(timeout=timeout)
     return result
 
@@ -294,9 +343,10 @@ class AddressSearchDialog(ctk.CTkToplevel):
     def _on_success(self):
         self.status.configure(text=f"✅  {self.result['address']}",
                               text_color=_SUCCESS)
-        self.ok_btn.configure(state="normal")
         self.search_btn.configure(state="normal",
                                   text="🔍   주소 검색 창 열기")
+        # 주소 선택 완료 → 자동 확인 (사용자가 버튼 누를 필요 없음)
+        self.after(400, self._confirm)
 
     def _on_fail(self):
         self.status.configure(text="⚠️  좌표 변환 실패. 다시 시도해주세요.",
@@ -423,6 +473,9 @@ class AddressFixDialog(ctk.CTkToplevel):
         self.ok_btn.configure(state="normal")
         self.search_btn.configure(
             state="normal", text="🔍   올바른 주소 검색 (브라우저에서 열림)")
+        # 일치하는 경우 자동 확인
+        if verdict == '일치':
+            self.after(600, self._confirm)
 
     def _on_fail(self):
         self.verify_lbl.configure(text="⚠️  좌표 변환 실패", text_color=_WARN)
