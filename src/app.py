@@ -818,6 +818,7 @@ class App(ctk.CTk):
             return
         self._stop_evt.set()
         self.stop_btn.configure(state="disabled", text="⏹")
+        self.refresh_btn.configure(state="normal")
         self._log("⏹  중단 요청 — 현재 단계 완료 후 종료됩니다...")
 
     # ── 로그 / 진행 헬퍼 ─────────────────────────────────────────────────────
@@ -884,7 +885,20 @@ class App(ctk.CTk):
             self._log("─" * 36); self._log("  1단계   엑셀 파일 읽기")
             self._log("─" * 36)
             try:
-                df = pd.read_excel(self.file_path, header=0)
+                xl = pd.ExcelFile(self.file_path)
+                df = None
+                for sheet in xl.sheet_names:
+                    try:
+                        tmp = pd.read_excel(xl, sheet_name=sheet, header=0)
+                        if any('택배받을 주소' in str(c) for c in tmp.columns):
+                            df = tmp
+                            if sheet != xl.sheet_names[0]:
+                                self._log(f"ℹ️  '{sheet}' 시트에서 주소 열 발견")
+                            break
+                    except Exception:
+                        continue
+                if df is None:
+                    df = pd.read_excel(xl, sheet_name=xl.sheet_names[0], header=0)
             except Exception as e:
                 self._log(f"❌  파일 읽기 실패: {e}")
                 self._reset_btn(); return
