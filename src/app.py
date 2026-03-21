@@ -727,6 +727,13 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=20), state="disabled",
             command=self._request_stop)
         self.stop_btn.pack(side="left")
+        self.refresh_btn = ctk.CTkButton(
+            bf, text="🔄", height=52, width=64, corner_radius=12,
+            fg_color=_SHADOW, hover_color=_BLUE_MID,
+            text_color=_TEXT, border_width=1, border_color=_BORDER,
+            font=ctk.CTkFont(size=20), state="disabled",
+            command=self._refresh)
+        self.refresh_btn.pack(side="left", padx=(8, 0))
 
         # 진행 상황 카드
         c4 = _card(body); c4.pack(fill="x", **G)
@@ -799,6 +806,7 @@ class App(ctk.CTk):
         self._stop_evt.clear()
         self.run_btn.configure(state="disabled", text="⏳  작업 진행 중...")
         self.stop_btn.configure(state="normal")
+        self.refresh_btn.configure(state="disabled")
         self._clear_log()
         self.bar.set(0)
         threading.Thread(target=self._pipeline, daemon=True).start()
@@ -840,6 +848,18 @@ class App(ctk.CTk):
                     "text": "▶   배송 순서 자동 정리 시작"})
         self.after(0, self.stop_btn.configure,
                    {"state": "disabled", "text": "⏹"})
+        self.after(0, self.refresh_btn.configure, {"state": "normal"})
+
+    def _refresh(self):
+        self._stop_evt.clear()
+        self._clear_log()
+        self.bar.set(0)
+        self.step_lbl.configure(text="대기 중", text_color=_SUBTEXT)
+        self.pct_lbl.configure(text="")
+        self.run_btn.configure(state="normal",
+                               text="▶   배송 순서 자동 정리 시작")
+        self.stop_btn.configure(state="disabled", text="⏹")
+        self.refresh_btn.configure(state="disabled")
 
     def _open_fix(self, headers, name, orig, rev, event, holder):
         AddressFixDialog(self, headers, name, orig, rev, event, holder)
@@ -868,9 +888,13 @@ class App(ctk.CTk):
             except Exception as e:
                 self._log(f"❌  파일 읽기 실패: {e}")
                 self._reset_btn(); return
-            if '택배받을 주소' not in df.columns:
+            addr_col = next((c for c in df.columns if '택배받을 주소' in str(c)), None)
+            if addr_col is None:
                 self._log("❌  '택배받을 주소' 열이 없습니다.")
                 self._reset_btn(); return
+            if addr_col != '택배받을 주소':
+                self._log(f"ℹ️  '{addr_col}' 열을 주소 열로 사용합니다.")
+                df = df.rename(columns={addr_col: '택배받을 주소'})
             df = df.dropna(subset=['택배받을 주소'])
             df['택배받을 주소'] = df['택배받을 주소'].astype(str).str.strip()
             total = len(df)
@@ -960,7 +984,8 @@ class App(ctk.CTk):
             for idx, row in vdf.iterrows():
                 nodes.append({'id': idx,
                               'name': row.get('이름', f'배송지{idx}'),
-                              'lat': row['Latitude'], 'lon': row['Longitude']})
+                              'lat': row['Latitude'], 'lon': row['Longitude'],
+                              'address': row.get('택배받을 주소', '')})
 
             def _prog(done, tot):
                 if self._stopped(): return
