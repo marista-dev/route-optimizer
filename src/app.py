@@ -989,8 +989,8 @@ class App(ctk.CTk):
             if self._stopped(): self._abort(); return
 
             # 4단계
-            self._step("4단계 — 클러스터링 + 순서 결정 중", 0.46)
-            self._log(f"\n{'─'*36}"); self._log("  4단계   클러스터링 + 클러스터 순서 결정")
+            self._step("4단계 — 그룹핑 + 도로시간 수집 중", 0.46)
+            self._log(f"\n{'─'*36}"); self._log("  4단계   같은 건물 그룹핑 + 도로 시간 수집")
             self._log("─" * 36)
             vdf   = df.dropna(subset=['Latitude', 'Longitude']).copy()
             nodes = [{'id': -1, 'name': '출발지',
@@ -1003,7 +1003,7 @@ class App(ctk.CTk):
 
             def _prog(done, tot):
                 if self._stopped(): return
-                self._step("4단계 — 클러스터 순서 결정 중",
+                self._step("4단계 — 도로 시간 수집 중",
                            0.46 + done / tot * 0.24)
 
             clear_checkpoint()
@@ -1012,11 +1012,11 @@ class App(ctk.CTk):
                                        stop_event=self._stop_evt,
                                        log_cb=self._log)
             if self._stopped(): self._abort(); return
-            self._log(f"\n✅  4단계 완료 — {len(nodes)}개 지점, 클러스터 순서 확정")
+            self._log(f"\n✅  4단계 완료 — {len(nodes)}개 지점 도로 시간 수집 완료")
 
             # 5단계
-            self._step("5단계 — 그룹핑 + 도로시간 수집 + 배송순서 최적화", 0.72)
-            self._log(f"\n{'─'*36}"); self._log("  5단계   그룹핑 → 도로시간 수집 → TSP 최적화")
+            self._step("5단계 — TSP 최적 배송 순서 계산 중", 0.72)
+            self._log(f"\n{'─'*36}"); self._log("  5단계   OR-Tools TSP 최적 배송 순서 계산")
             self._log("─" * 36)
             ordered = optimize_route(nodes, matrix, headers, log_cb=self._log)
             if self._stopped(): self._abort(); return
