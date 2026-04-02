@@ -1,13 +1,16 @@
 """
 optimizer.py
-카카오 모빌리티 API + Cluster-First Route-Second 배송 순서 최적화
+카카오 모빌리티 API + Sweep-Nearest 기반 배송 순서 최적화
 
 전략:
   4단계 (build_time_matrix):
-    1. K-Means 클러스터링으로 배송지를 군집 분할
-    2. 클러스터 중심 좌표끼리 카카오 API → 클러스터 순서 확정
-       (출발 창고 → 가장 가까운 중심 = 1번, 1번→2번, 2번→3번...)
-    3. 클러스터 + 순서만 모듈 변수에 저장 → 5단계 전달
+    1. Distance-based Sweep Nearest (DSN) 클러스터링
+       - 출발 창고 기준 극좌표 각도(θ) 계산
+       - 가장 먼 노드부터 시작, Nearest Neighbor로 클러스터 채움
+       - 용량(max_per_cluster) 초과 시 다음 각도 방향으로 새 클러스터
+       → 구조적으로 시계 방향 순서 보장, 왔다갔다 불가능
+    2. 클러스터 순서 = 각도 순서 (API 호출 불필요)
+    3. 클러스터 + 순서를 모듈 변수에 저장 → 5단계 전달
 
   5단계 (optimize_route):
     1. 같은 건물/주소 그룹핑 → 대표 노드 추출
@@ -107,6 +110,16 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _polar_angle(depot_lat, depot_lon, node_lat, node_lon) -> float:
+    """출발 창고 기준 극좌표 각도(0~360도) 반환."""
+    dy = node_lat - depot_lat
+    dx = node_lon - depot_lon
+    angle = math.degrees(math.atan2(dy, dx))
+    if angle < 0:
+        angle += 360.0
+    return angle
+
+
 # ── 같은 위치 그룹핑 ─────────────────────────────────────────────────────────
 def _strip_unit(address: str) -> str:
     """동/호/층 번호를 제거한 기본 주소 반환 (같은 건물 단위 비교용)."""
@@ -160,87 +173,161 @@ def _build_location_groups(node_indices: list, nodes: list) -> dict:
     return groups
 
 
-# ── 클러스터링 ────────────────────────────────────────────────────────────────
-def _kmeans_cluster(coords: list, k: int, max_iter: int = 100) -> list:
-    """순수 Python K-Means++ 구현."""
-    import random
-    n = len(coords)
-    if n <= k:
-        return list(range(n))
+# ── Distance-based Sweep Nearest (DSN) 클러스터링 ────────────────────────────
+def _sweep_nearest_cluster(nodes: list, delivery_nodes: list,
+                           max_per_cluster: int = 30) -> dict:
+    """
+    DSN (Distance-based Sweep Nearest) 클러스터링.
 
-    centroids = [coords[random.randint(0, n - 1)]]
-    for _ in range(1, k):
-        dists = []
-        for c in coords:
-            min_d = min(_haversine_km(c[0], c[1], ct[0], ct[1])
-                        for ct in centroids)
-            dists.append(min_d ** 2)
-        total = sum(dists)
-        if total == 0:
-            centroids.append(coords[random.randint(0, n - 1)])
-            continue
-        probs = [d / total for d in dists]
-        r = random.random()
-        cum = 0
-        for idx, p in enumerate(probs):
-            cum += p
-            if cum >= r:
-                centroids.append(coords[idx])
-                break
-        else:
-            centroids.append(coords[-1])
+    Sweep + Nearest Neighbor 하이브리드:
+    1. 출발 창고 기준 극좌표 각도(θ)를 계산하여 정렬
+    2. 가장 먼 노드(depot에서 멀리 있는)부터 클러스터 시작 (DSN 특성)
+    3. 클러스터 내에서는 Nearest Neighbor로 가까운 노드부터 채움
+    4. max_per_cluster 초과하면 다음 각도 방향으로 새 클러스터
 
-    labels = [0] * n
-    for _ in range(max_iter):
-        new_labels = []
-        for c in coords:
-            best_j, best_d = 0, float('inf')
-            for j, ct in enumerate(centroids):
-                d = _haversine_km(c[0], c[1], ct[0], ct[1])
-                if d < best_d:
-                    best_d = d
-                    best_j = j
-            new_labels.append(best_j)
-        if new_labels == labels:
+    효과:
+    - 시계 방향 순서가 구조적으로 보장
+    - 같은 방향인데 먼 노드가 다른 클러스터에 섞이지 않음
+    - K-Means의 "경계 점프" 문제 없음
+
+    Parameters
+    ----------
+    nodes           : 전체 노드 리스트 (nodes[0] = 출발지)
+    delivery_nodes  : 배송지 인덱스 리스트
+    max_per_cluster : 클러스터 당 최대 노드 수
+
+    Returns
+    -------
+    {cluster_id: [node_indices, ...], ...}
+    """
+    if len(delivery_nodes) <= max_per_cluster:
+        return {0: list(delivery_nodes)}
+
+    depot_lat = nodes[0]['lat']
+    depot_lon = nodes[0]['lon']
+
+    # 1) 각 배송지의 극좌표 각도 + depot으로부터 거리 계산
+    node_info = []
+    for ni in delivery_nodes:
+        angle = _polar_angle(depot_lat, depot_lon,
+                             nodes[ni]['lat'], nodes[ni]['lon'])
+        dist  = _haversine_km(depot_lat, depot_lon,
+                              nodes[ni]['lat'], nodes[ni]['lon'])
+        node_info.append((ni, angle, dist))
+
+    # 2) 각도 순 정렬 (시계 방향 기본 순서)
+    node_info.sort(key=lambda x: x[1])
+
+    # 3) DSN: 각도 순서대로 순회하면서 Nearest Neighbor로 클러스터 채움
+    clusters = {}
+    assigned = set()
+    cluster_id = 0
+
+    # 시작점: 가장 먼 미할당 노드의 각도 위치부터
+    # (먼 곳부터 잡아야 나중에 먼 노드가 가까운 클러스터에 억지 편입되지 않음)
+    unassigned_by_angle = list(node_info)  # 각도 순 정렬된 상태
+
+    while len(assigned) < len(delivery_nodes):
+        # 미할당 노드 중 가장 먼 노드를 시드로 선택
+        seed = None
+        seed_dist = -1
+        for ni, angle, dist in unassigned_by_angle:
+            if ni not in assigned and dist > seed_dist:
+                seed_dist = dist
+                seed = ni
+
+        if seed is None:
             break
-        labels = new_labels
-        for j in range(k):
-            members = [coords[i] for i in range(n) if labels[i] == j]
-            if members:
-                centroids[j] = (
-                    sum(m[0] for m in members) / len(members),
-                    sum(m[1] for m in members) / len(members),
-                )
-    return labels
+
+        # 이 시드의 각도 기준으로, 각도가 가까운 미할당 노드들을
+        # Nearest Neighbor로 채워서 클러스터 구성
+        current_cluster = [seed]
+        assigned.add(seed)
+
+        while len(current_cluster) < max_per_cluster:
+            last = current_cluster[-1]
+            best_ni   = None
+            best_dist = float('inf')
+
+            for ni, angle, dist in unassigned_by_angle:
+                if ni in assigned:
+                    continue
+                d = _haversine_km(nodes[last]['lat'], nodes[last]['lon'],
+                                  nodes[ni]['lat'], nodes[ni]['lon'])
+                if d < best_dist:
+                    best_dist = d
+                    best_ni   = ni
+
+            if best_ni is None:
+                break
+
+            # 너무 멀어지면 (2km 초과) 새 클러스터로 분리
+            seed_lat = nodes[seed]['lat']
+            seed_lon = nodes[seed]['lon']
+            dist_from_seed = _haversine_km(
+                seed_lat, seed_lon,
+                nodes[best_ni]['lat'], nodes[best_ni]['lon'])
+
+            if dist_from_seed > 3.0 and len(current_cluster) >= 3:
+                # 이미 3개 이상 채웠고, 시드에서 3km 넘으면 새 클러스터
+                break
+
+            current_cluster.append(best_ni)
+            assigned.add(best_ni)
+
+        clusters[cluster_id] = current_cluster
+        cluster_id += 1
+
+    return clusters
 
 
-def _determine_k(n_points: int) -> int:
-    """배송지 수에 따른 적정 클러스터 수 결정."""
-    if n_points <= 5:
-        return 1
-    if n_points <= 12:
-        return 2
-    if n_points <= 20:
-        return 3
-    if n_points <= 30:
-        return 4
-    return min(max(n_points // 6, 4), 8)
+def _order_clusters_by_angle(nodes: list, clusters: dict) -> list:
+    """
+    클러스터를 출발 창고 기준 극좌표 각도 순으로 정렬.
+    Sweep이므로 클러스터 순서 = 각도 순서 (API 불필요).
+
+    Returns: [cluster_id, ...]
+    """
+    depot_lat = nodes[0]['lat']
+    depot_lon = nodes[0]['lon']
+
+    cluster_angles = []
+    for cid, members in clusters.items():
+        # 클러스터 중심의 각도
+        avg_lat = sum(nodes[ni]['lat'] for ni in members) / len(members)
+        avg_lon = sum(nodes[ni]['lon'] for ni in members) / len(members)
+        angle = _polar_angle(depot_lat, depot_lon, avg_lat, avg_lon)
+        cluster_angles.append((cid, angle))
+
+    # 각도 순 정렬
+    cluster_angles.sort(key=lambda x: x[1])
+
+    # 출발 창고에서 가장 가까운 클러스터를 첫 번째로 회전
+    # → Nearest Neighbor로 시작점 결정
+    best_start = 0
+    best_dist  = float('inf')
+    for i, (cid, angle) in enumerate(cluster_angles):
+        members = clusters[cid]
+        avg_lat = sum(nodes[ni]['lat'] for ni in members) / len(members)
+        avg_lon = sum(nodes[ni]['lon'] for ni in members) / len(members)
+        d = _haversine_km(depot_lat, depot_lon, avg_lat, avg_lon)
+        if d < best_dist:
+            best_dist = d
+            best_start = i
+
+    # 가장 가까운 클러스터부터 시계 방향으로 회전
+    ordered = cluster_angles[best_start:] + cluster_angles[:best_start]
+
+    return [cid for cid, angle in ordered]
 
 
-def _cluster_centroid(nodes: list, indices: list) -> tuple:
-    """클러스터에 속한 노드들의 중심 좌표 반환."""
-    lats = [nodes[i]['lat'] for i in indices]
-    lons = [nodes[i]['lon'] for i in indices]
-    return (sum(lats) / len(lats), sum(lons) / len(lons))
-
-
-# ── 4단계: 클러스터링 + 순서 확정 ─────────────────────────────────────────────
+# ── 4단계: Sweep 클러스터링 + 순서 확정 ───────────────────────────────────────
 def build_time_matrix(nodes: list, headers: dict,
                       progress_cb=None,
                       stop_event: threading.Event = None,
                       log_cb=None) -> list:
     """
-    4단계: 클러스터링 → 클러스터 순서 확정.
+    4단계: DSN Sweep 클러스터링 → 각도 기반 순서 확정.
     """
     global _last_clusters, _last_cluster_order
 
@@ -257,80 +344,39 @@ def build_time_matrix(nodes: list, headers: dict,
 
     delivery_nodes = list(range(1, n))
 
-    # ── 4-1) K-Means 클러스터링 ──────────────────────────────────────────────
-    _log("  4-1)  K-Means 클러스터링 중...")
-    coords = [(nodes[i]['lat'], nodes[i]['lon']) for i in delivery_nodes]
-    k = _determine_k(len(delivery_nodes))
+    # ── 4-1) DSN Sweep Nearest 클러스터링 ────────────────────────────────────
+    _log("  4-1)  Sweep Nearest 클러스터링 중...")
+    _log(f"       출발 창고 기준 극좌표 각도 + 거리 기반 분할")
 
-    if k <= 1:
-        clusters = {0: delivery_nodes}
-        _log(f"  ✅  클러스터 1개 (전체를 하나로 처리)")
+    # 클러스터당 최대 노드 수 결정
+    total = len(delivery_nodes)
+    if total <= 20:
+        max_per = total  # 20건 이하면 전체를 하나로
+    elif total <= 50:
+        max_per = 20
     else:
-        labels = _kmeans_cluster(coords, k)
-        clusters = {}
-        for idx, label in enumerate(labels):
-            clusters.setdefault(label, []).append(delivery_nodes[idx])
-        _log(f"  ✅  {len(clusters)}개 클러스터 생성 완료")
-        for cid, members in clusters.items():
-            _log(f"       클러스터 {cid + 1}: {len(members)}건")
+        max_per = max(15, total // 6)
+
+    clusters = _sweep_nearest_cluster(nodes, delivery_nodes, max_per)
+
+    _log(f"  ✅  {len(clusters)}개 클러스터 생성 완료")
+    for cid, members in clusters.items():
+        _log(f"       클러스터 {cid + 1}: {len(members)}건")
 
     _last_clusters = clusters
 
     if stop_event and stop_event.is_set():
         return matrix
 
-    # ── 4-2) 클러스터 중심 좌표끼리 카카오 API → 순서 확정 ───────────────────
-    if len(clusters) <= 1:
-        cluster_order = list(clusters.keys())
-        _log("  4-2)  클러스터 1개 → 순서 결정 불필요")
-    else:
-        _log(f"\n  4-2)  클러스터 순서 결정 중 (카카오 API)...")
-        centroids = {}
-        for cid, members in clusters.items():
-            centroids[cid] = _cluster_centroid(nodes, members)
+    # ── 4-2) 클러스터 순서 = 각도 순서 (API 불필요) ──────────────────────────
+    _log(f"\n  4-2)  클러스터 순서 결정 중 (극좌표 각도 순)...")
+    cluster_order = _order_clusters_by_angle(nodes, clusters)
 
-        remaining_c = set(clusters.keys())
-        cluster_order = []
-        cur_lat, cur_lon = nodes[0]['lat'], nodes[0]['lon']
+    _log(f"  ✅  클러스터 순서 확정: "
+         + " → ".join(f"C{cid + 1}" for cid in cluster_order))
 
-        while remaining_c:
-            if stop_event and stop_event.is_set():
-                cluster_order.extend(remaining_c)
-                break
-
-            best_cid  = None
-            best_time = float('inf')
-
-            for cid in remaining_c:
-                clat, clon = centroids[cid]
-                t = _get_driving_time(cur_lon, cur_lat, clon, clat, headers)
-                time.sleep(0.15)
-                if t < best_time:
-                    best_time = t
-                    best_cid  = cid
-
-            if best_cid is None:
-                for cid in remaining_c:
-                    clat, clon = centroids[cid]
-                    d = _haversine_km(cur_lat, cur_lon, clat, clon)
-                    if d < best_time:
-                        best_time = d
-                        best_cid  = cid
-
-            cluster_order.append(best_cid)
-            remaining_c.discard(best_cid)
-            cur_lat, cur_lon = centroids[best_cid]
-
-            order_num = len(cluster_order)
-            mins = best_time // 60
-            _log(f"       {order_num}번째 → 클러스터 {best_cid + 1}"
-                 f" ({len(clusters[best_cid])}건, 약 {mins}분)")
-
-            if progress_cb:
-                progress_cb(len(cluster_order), len(clusters))
-
-        _log(f"  ✅  클러스터 순서 확정: "
-             + " → ".join(f"C{cid + 1}" for cid in cluster_order))
+    if progress_cb:
+        progress_cb(1, 1)
 
     _last_cluster_order = cluster_order
 
@@ -493,16 +539,8 @@ def optimize_route(nodes: list, time_matrix: list,
 
     # 4단계 결과가 없으면 (직접 호출된 경우) fallback
     if clusters is None or cluster_order is None:
-        coords = [(nodes[i]['lat'], nodes[i]['lon']) for i in delivery_nodes]
-        k = _determine_k(len(delivery_nodes))
-        if k <= 1:
-            clusters = {0: delivery_nodes}
-        else:
-            labels = _kmeans_cluster(coords, k)
-            clusters = {}
-            for idx, label in enumerate(labels):
-                clusters.setdefault(label, []).append(delivery_nodes[idx])
-        cluster_order = list(clusters.keys())
+        clusters = _sweep_nearest_cluster(nodes, delivery_nodes)
+        cluster_order = _order_clusters_by_angle(nodes, clusters)
 
     # ── 5-1) 같은 건물 그룹핑 → 대표 노드 추출 ──────────────────────────────
     _log("  5-1)  같은 건물/주소 그룹핑 중...")
@@ -543,13 +581,12 @@ def optimize_route(nodes: list, time_matrix: list,
                     if i != j:
                         pairs_needed.add((i, j))
 
-        # 클러스터 간 경계 대표 쌍
-        for ci in cluster_reps:
-            for cj in cluster_reps:
-                if ci == cj:
-                    continue
-                reps_ci = cluster_reps[ci]
-                reps_cj = cluster_reps[cj]
+        # 클러스터 간 경계 대표 쌍 (인접 클러스터만)
+        for idx, cid in enumerate(cluster_order):
+            if idx + 1 < len(cluster_order):
+                next_cid = cluster_order[idx + 1]
+                reps_ci = cluster_reps.get(cid, [])
+                reps_cj = cluster_reps.get(next_cid, [])
                 border = []
                 for ni in reps_ci:
                     for nj in reps_cj:
