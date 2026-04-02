@@ -1018,7 +1018,7 @@ class App(ctk.CTk):
             self._step("5단계 — 최적 배송 순서 계산 중 (최대 3분)", 0.72)
             self._log(f"\n{'─'*36}"); self._log("  5단계   최적 배송 순서 계산 (최대 3분)")
             self._log("─" * 36)
-            ordered = optimize_route(nodes, matrix)
+            ordered = optimize_route(nodes, matrix, headers)
             if self._stopped(): self._abort(); return
             if ordered is None:
                 self._log("❌  순서 계산 실패"); self._reset_btn(); return

@@ -5,22 +5,20 @@ optimizer.py
 전략:
   4단계 (build_time_matrix):
     1. K-Means 클러스터링으로 배송지를 군집 분할
-    2. 같은 건물/주소 그룹핑 → 대표 노드 추출
-    3. 클러스터 중심 좌표끼리 카카오 API → 클러스터 순서 확정
-       (출발 창고 → 가장 가까운 중심 = 1번, 1번 → 2번, ...)
-    4. 출발지↔대표, 대표↔대표 클러스터 내부 쌍 카카오 API 호출
-    5. 클러스터 간 경계 대표 노드 쌍 카카오 API 호출 (IN/OUT 결정용)
-    6. 결과를 모듈 변수에 저장 → 5단계에서 그대로 사용
+    2. 클러스터 중심 좌표끼리 카카오 API → 클러스터 순서 확정
+       (출발 창고 → 가장 가까운 중심 = 1번, 1번→2번, 2번→3번...)
+    3. 클러스터 + 순서만 모듈 변수에 저장 → 5단계 전달
 
   5단계 (optimize_route):
-    1. 4단계 결과 그대로 사용 (클러스터, 순서, 그룹핑 전부)
-    2. 각 클러스터 내 IN/OUT 결정
-    3. OR-Tools TSP로 IN → OUT 흐름 최적화 (대표 노드만 참여)
-    4. 대표 노드 뒤에 같은 건물 멤버 펼침
+    1. 같은 건물/주소 그룹핑 → 대표 노드 추출
+    2. IN / OUT 결정
+    3. 대표 노드끼리 카카오 API 호출 (클러스터 내부 + 경계)
+    4. OR-Tools TSP로 IN → OUT 흐름 최적화 (대표 노드만 참여)
+    5. 대표 노드 뒤에 같은 건물 멤버 펼침
 
 공개 API (app.py 호환):
   - build_time_matrix(nodes, headers, progress_cb, stop_event)
-  - optimize_route(nodes, time_matrix)
+  - optimize_route(nodes, time_matrix, headers)
   - clear_checkpoint()
 """
 
@@ -36,10 +34,8 @@ from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 
 # ── 4단계→5단계 전달용 모듈 변수 ─────────────────────────────────────────────
-_last_clusters       = None  # {cluster_id: [node_indices, ...]}
-_last_cluster_order  = None  # [cluster_id, ...]  순서대로
-_last_location_groups = None  # {대표노드: [대표, 멤버1, ...], ...}
-_last_rep_nodes      = None  # [대표노드 인덱스, ...]
+_last_clusters      = None  # {cluster_id: [node_indices, ...]}
+_last_cluster_order = None  # [cluster_id, ...]  순서대로
 
 # ── 체크포인트 ────────────────────────────────────────────────────────────────
 _CHECKPOINT_DIR = os.path.join(
@@ -68,11 +64,8 @@ def _load_checkpoint() -> dict | None:
 def clear_checkpoint():
     """체크포인트 파일 삭제 (중단 또는 새 작업 시작 시 호출)."""
     global _last_clusters, _last_cluster_order
-    global _last_location_groups, _last_rep_nodes
     _last_clusters = None
     _last_cluster_order = None
-    _last_location_groups = None
-    _last_rep_nodes = None
     if os.path.exists(CHECKPOINT_FILE):
         try:
             os.remove(CHECKPOINT_FILE)
@@ -241,51 +234,27 @@ def _cluster_centroid(nodes: list, indices: list) -> tuple:
     return (sum(lats) / len(lats), sum(lons) / len(lons))
 
 
-# ── 시간 행렬 구축 (4단계) ────────────────────────────────────────────────────
+# ── 4단계: 클러스터링 + 순서 확정 ─────────────────────────────────────────────
 def build_time_matrix(nodes: list, headers: dict,
                       progress_cb=None,
                       stop_event: threading.Event = None) -> list:
     """
-    4단계: 클러스터링 → 그룹핑 → 클러스터 순서 → API 호출.
+    4단계: 클러스터링 → 클러스터 순서 확정.
 
     실행 순서:
     1. K-Means 클러스터링
-    2. 같은 건물 그룹핑 → 대표 노드 추출
-    3. 클러스터 중심 좌표끼리 카카오 API → 클러스터 순서 확정
-    4. 출발지↔대표, 클러스터 내부 대표끼리 쌍 카카오 API 호출
-    5. 클러스터 간 경계 대표 노드 쌍 카카오 API 호출
-    6. 모듈 변수에 저장 → 5단계 전달
+    2. 클러스터 중심 좌표끼리 카카오 API 호출 → 순서 확정
+    3. 클러스터 + 순서를 모듈 변수에 저장
+    반환: 빈 N×N 행렬 (5단계에서 필요한 쌍만 API 호출)
     """
     global _last_clusters, _last_cluster_order
-    global _last_location_groups, _last_rep_nodes
 
     n = len(nodes)
     if n <= 1:
         return [[0]]
 
-    # 체크포인트 복구
-    saved = _load_checkpoint()
-    if saved and saved.get('n') == n:
-        matrix = saved.get('matrix')
-        if matrix and len(matrix) == n and len(matrix[0]) == n:
-            remaining = sum(1 for i in range(n) for j in range(n)
-                            if i != j and matrix[i][j] is None)
-            if remaining == 0:
-                # 클러스터 정보도 복구
-                if (saved.get('clusters') and saved.get('cluster_order')
-                        and saved.get('location_groups')
-                        and saved.get('rep_nodes')):
-                    _last_clusters = {int(k): v
-                                      for k, v in saved['clusters'].items()}
-                    _last_cluster_order = saved['cluster_order']
-                    _last_location_groups = {int(k): v
-                                             for k, v in saved['location_groups'].items()}
-                    _last_rep_nodes = saved['rep_nodes']
-                return matrix
-    else:
-        matrix = [[None] * n for _ in range(n)]
-        for i in range(n):
-            matrix[i][i] = 0
+    # 빈 행렬 초기화 (대각선 = 0)
+    matrix = [[0 if i == j else None for j in range(n)] for i in range(n)]
 
     delivery_nodes = list(range(1, n))
 
@@ -304,30 +273,9 @@ def build_time_matrix(nodes: list, headers: dict,
     _last_clusters = clusters
 
     if stop_event and stop_event.is_set():
-        _save_checkpoint({'n': n, 'matrix': matrix})
         return matrix
 
-    # ── 2) 같은 건물 그룹핑 → 대표 노드 추출 ────────────────────────────────
-    location_groups = _build_location_groups(delivery_nodes, nodes)
-    rep_nodes = list(location_groups.keys())
-
-    _last_location_groups = location_groups
-    _last_rep_nodes = rep_nodes
-
-    # 대표 노드가 어느 클러스터에 속하는지 매핑
-    node_to_cluster = {}
-    for cid, members in clusters.items():
-        for ni in members:
-            node_to_cluster[ni] = cid
-
-    # 클러스터별 대표 노드 목록
-    cluster_reps = {}
-    for rep in rep_nodes:
-        cid = node_to_cluster.get(rep)
-        if cid is not None:
-            cluster_reps.setdefault(cid, []).append(rep)
-
-    # ── 3) 클러스터 중심 좌표끼리 카카오 API → 순서 확정 ─────────────────────
+    # ── 2) 클러스터 중심 좌표끼리 카카오 API → 순서 확정 ─────────────────────
     if len(clusters) <= 1:
         cluster_order = list(clusters.keys())
     else:
@@ -356,7 +304,6 @@ def build_time_matrix(nodes: list, headers: dict,
                     best_cid  = cid
 
             if best_cid is None:
-                # fallback: Haversine
                 for cid in remaining_c:
                     clat, clon = centroids[cid]
                     d = _haversine_km(cur_lat, cur_lon, clat, clon)
@@ -368,88 +315,12 @@ def build_time_matrix(nodes: list, headers: dict,
             remaining_c.discard(best_cid)
             cur_lat, cur_lon = centroids[best_cid]
 
+            if progress_cb:
+                done = len(cluster_order)
+                total = len(clusters)
+                progress_cb(done, total)
+
     _last_cluster_order = cluster_order
-
-    if stop_event and stop_event.is_set():
-        _save_checkpoint({'n': n, 'matrix': matrix})
-        return matrix
-
-    # ── 4) API 호출: 출발지↔대표, 클러스터 내부 대표끼리 ────────────────────
-    pairs_needed = set()
-
-    # 출발지(0) ↔ 모든 대표 노드
-    for rep in rep_nodes:
-        pairs_needed.add((0, rep))
-        pairs_needed.add((rep, 0))
-
-    # 클러스터 내부 대표끼리 모든 쌍
-    for cid, reps in cluster_reps.items():
-        for i in reps:
-            for j in reps:
-                if i != j:
-                    pairs_needed.add((i, j))
-
-    # ── 5) 클러스터 간 경계 대표 노드 쌍 (IN/OUT 결정용) ────────────────────
-    cluster_ids = sorted(clusters.keys())
-    for ci in cluster_ids:
-        reps_ci = cluster_reps.get(ci, [])
-        for cj in cluster_ids:
-            if ci == cj:
-                continue
-            reps_cj = cluster_reps.get(cj, [])
-            border_pairs = []
-            for ni in reps_ci:
-                for nj in reps_cj:
-                    d = _haversine_km(nodes[ni]['lat'], nodes[ni]['lon'],
-                                      nodes[nj]['lat'], nodes[nj]['lon'])
-                    border_pairs.append((d, ni, nj))
-            border_pairs.sort()
-            for _, ni, nj in border_pairs[:min(5, len(border_pairs))]:
-                pairs_needed.add((ni, nj))
-                pairs_needed.add((nj, ni))
-
-    # 이미 계산된 쌍 제외
-    pairs_todo = [(i, j) for (i, j) in pairs_needed
-                  if matrix[i][j] is None]
-
-    total = len(pairs_todo)
-    done  = 0
-
-    for i, j in pairs_todo:
-        if stop_event and stop_event.is_set():
-            _save_checkpoint({'n': n, 'matrix': matrix})
-            return matrix
-
-        if matrix[i][j] is None:
-            matrix[i][j] = _get_driving_time(
-                nodes[i]['lon'], nodes[i]['lat'],
-                nodes[j]['lon'], nodes[j]['lat'],
-                headers)
-            time.sleep(0.15)
-            done += 1
-
-            if done % 10 == 0:
-                _save_checkpoint({'n': n, 'matrix': matrix})
-                if progress_cb:
-                    progress_cb(done, total)
-
-    # 아직 None인 셀 = Haversine 추정치 (직선거리 ÷ 40km/h)
-    for i in range(n):
-        for j in range(n):
-            if i != j and matrix[i][j] is None:
-                dist_km = _haversine_km(nodes[i]['lat'], nodes[i]['lon'],
-                                         nodes[j]['lat'], nodes[j]['lon'])
-                matrix[i][j] = int(dist_km / 40.0 * 3600)
-
-    # ── 6) 모듈 변수 + 체크포인트 저장 ──────────────────────────────────────
-    _save_checkpoint({
-        'n': n,
-        'matrix': matrix,
-        'clusters': {str(k): v for k, v in clusters.items()},
-        'cluster_order': cluster_order,
-        'location_groups': {str(k): v for k, v in location_groups.items()},
-        'rep_nodes': rep_nodes,
-    })
 
     return matrix
 
@@ -584,19 +455,23 @@ def _find_exit_node(cluster_reps: list, next_cluster_reps: list,
     return best_node
 
 
-# ── 메인 최적화 (5단계) ──────────────────────────────────────────────────────
-def optimize_route(nodes: list, time_matrix: list):
+# ── 5단계: 그룹핑 + API 호출 + TSP + 펼침 ────────────────────────────────────
+def optimize_route(nodes: list, time_matrix: list, headers: dict = None):
     """
-    5단계: 4단계 결과를 그대로 사용하여 배송 순서 최적화.
+    5단계: 그룹핑 → IN/OUT → 대표끼리 API 호출 → TSP → 멤버 펼침.
 
-    실행 순서:
-    1. 4단계에서 저장한 클러스터, 순서, 그룹핑 결과 로드
-    2. 각 클러스터 내 IN/OUT 결정
-    3. OR-Tools TSP (대표 노드만, IN→OUT 고정)
-    4. 대표 순서대로 같은 건물 멤버 펼침
+    Parameters
+    ----------
+    nodes       : [{'name', 'lat', 'lon', 'id', 'address'(선택)}, ...]
+                  nodes[0] = 출발지 (사무실)
+    time_matrix : N×N 행렬 (4단계에서 반환된 빈 행렬, 여기서 채움)
+    headers     : 카카오 API Authorization 헤더 (5단계에서 API 호출용)
+
+    Returns
+    -------
+    배송 순서대로 정렬된 node index 리스트 (출발지 제외) or None
     """
     global _last_clusters, _last_cluster_order
-    global _last_location_groups, _last_rep_nodes
 
     n = len(nodes)
     if n <= 1:
@@ -607,12 +482,10 @@ def optimize_route(nodes: list, time_matrix: list):
     delivery_nodes = list(range(1, n))
 
     # ── 4단계 결과 로드 ──────────────────────────────────────────────────────
-    clusters       = _last_clusters
-    cluster_order  = _last_cluster_order
-    location_groups = _last_location_groups
-    rep_nodes      = _last_rep_nodes
+    clusters      = _last_clusters
+    cluster_order = _last_cluster_order
 
-    # 4단계 결과가 없으면 (직접 호출된 경우) 여기서 계산
+    # 4단계 결과가 없으면 (직접 호출된 경우) fallback
     if clusters is None or cluster_order is None:
         coords = [(nodes[i]['lat'], nodes[i]['lon']) for i in delivery_nodes]
         k = _determine_k(len(delivery_nodes))
@@ -625,11 +498,11 @@ def optimize_route(nodes: list, time_matrix: list):
                 clusters.setdefault(label, []).append(delivery_nodes[idx])
         cluster_order = list(clusters.keys())
 
-    if location_groups is None:
-        location_groups = _build_location_groups(delivery_nodes, nodes)
-        rep_nodes = list(location_groups.keys())
+    # ── 1) 같은 건물 그룹핑 → 대표 노드 추출 ────────────────────────────────
+    location_groups = _build_location_groups(delivery_nodes, nodes)
+    rep_nodes = list(location_groups.keys())
 
-    # 대표 노드가 어느 클러스터에 속하는지 매핑
+    # 대표 노드 → 클러스터 매핑
     node_to_cluster = {}
     for cid, members in clusters.items():
         for ni in members:
@@ -642,7 +515,54 @@ def optimize_route(nodes: list, time_matrix: list):
         if cid is not None:
             cluster_reps.setdefault(cid, []).append(rep)
 
-    # ── 클러스터 순서대로 TSP 풀기 ───────────────────────────────────────────
+    # ── 2) 대표 노드끼리 카카오 API 호출 ─────────────────────────────────────
+    #    클러스터 내부 대표 쌍 + 출발지↔대표 + 경계 대표 쌍
+    if headers is not None:
+        pairs_needed = set()
+
+        # 출발지(0) ↔ 모든 대표
+        for rep in rep_nodes:
+            pairs_needed.add((0, rep))
+            pairs_needed.add((rep, 0))
+
+        # 클러스터 내부 대표끼리 모든 쌍
+        for cid, reps in cluster_reps.items():
+            for i in reps:
+                for j in reps:
+                    if i != j:
+                        pairs_needed.add((i, j))
+
+        # 클러스터 간 경계 대표 쌍 (IN/OUT 결정용)
+        for ci in cluster_reps:
+            for cj in cluster_reps:
+                if ci == cj:
+                    continue
+                reps_ci = cluster_reps[ci]
+                reps_cj = cluster_reps[cj]
+                border = []
+                for ni in reps_ci:
+                    for nj in reps_cj:
+                        d = _haversine_km(nodes[ni]['lat'], nodes[ni]['lon'],
+                                          nodes[nj]['lat'], nodes[nj]['lon'])
+                        border.append((d, ni, nj))
+                border.sort()
+                for _, ni, nj in border[:min(5, len(border))]:
+                    pairs_needed.add((ni, nj))
+                    pairs_needed.add((nj, ni))
+
+        # API 호출
+        pairs_todo = [(i, j) for (i, j) in pairs_needed
+                      if time_matrix[i][j] is None]
+
+        for i, j in pairs_todo:
+            if time_matrix[i][j] is None:
+                time_matrix[i][j] = _get_driving_time(
+                    nodes[i]['lon'], nodes[i]['lat'],
+                    nodes[j]['lon'], nodes[j]['lat'],
+                    headers)
+                time.sleep(0.15)
+
+    # ── 3) IN/OUT 결정 + 클러스터 내 TSP ─────────────────────────────────────
     rep_order = []
 
     for step, cid in enumerate(cluster_order):
@@ -650,7 +570,7 @@ def optimize_route(nodes: list, time_matrix: list):
         if not reps:
             continue
 
-        # IN: 이전 클러스터의 마지막 대표에서 가장 가까운 이 클러스터 대표
+        # IN: 이전 클러스터 마지막 대표에서 가장 가까운 이 클러스터 대표
         if rep_order:
             last_rep = rep_order[-1]
             entry_node = min(
@@ -673,15 +593,15 @@ def optimize_route(nodes: list, time_matrix: list):
             exit_node = _find_exit_node(reps, next_reps,
                                          nodes, time_matrix)
         else:
-            exit_node = None  # 마지막 클러스터는 자유 종료
+            exit_node = None
 
-        # 클러스터 내 TSP (대표만, IN→OUT 고정)
+        # TSP (대표만, IN→OUT 고정)
         cluster_route = _solve_cluster_tsp(
             reps, entry_node, exit_node, nodes, time_matrix)
 
         rep_order.extend(cluster_route)
 
-    # ── 대표 순서대로 같은 건물 멤버 펼침 ────────────────────────────────────
+    # ── 4) 대표 순서대로 같은 건물 멤버 펼침 ─────────────────────────────────
     final_order = []
     for rep in rep_order:
         group_members = location_groups.get(rep, [rep])
