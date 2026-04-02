@@ -989,9 +989,9 @@ class App(ctk.CTk):
             if self._stopped(): self._abort(); return
 
             # 4단계
-            self._step("4단계 — 도로 이동 시간 계산 중 (시간 소요)", 0.46)
-            self._log(f"\n{'─'*36}"); self._log("  4단계   도로 이동 시간 계산")
-            self._log("  배송지 수에 따라 10~15분 소요됩니다"); self._log("─" * 36)
+            self._step("4단계 — 클러스터링 + 순서 결정 중", 0.46)
+            self._log(f"\n{'─'*36}"); self._log("  4단계   클러스터링 + 클러스터 순서 결정")
+            self._log("─" * 36)
             vdf   = df.dropna(subset=['Latitude', 'Longitude']).copy()
             nodes = [{'id': -1, 'name': '출발지',
                       'lat': self.start_lat, 'lon': self.start_lon}]
@@ -1003,22 +1003,23 @@ class App(ctk.CTk):
 
             def _prog(done, tot):
                 if self._stopped(): return
-                self._step("4단계 — 도로 이동 시간 계산 중",
+                self._step("4단계 — 클러스터 순서 결정 중",
                            0.46 + done / tot * 0.24)
-                self._log(f"  →  {done} / {tot} 경로 계산 완료")
 
             clear_checkpoint()
             matrix = build_time_matrix(nodes, headers,
                                        progress_cb=_prog,
-                                       stop_event=self._stop_evt)
+                                       stop_event=self._stop_evt,
+                                       log_cb=self._log)
             if self._stopped(): self._abort(); return
-            self._log(f"✅  4단계 완료 — {len(nodes)}개 지점")
+            self._log(f"
+            self._log(f"\n✅  4단계 완료 — {len(nodes)}개 지점, 클러스터 순서 확정")
 
             # 5단계
-            self._step("5단계 — 최적 배송 순서 계산 중 (최대 3분)", 0.72)
-            self._log(f"\n{'─'*36}"); self._log("  5단계   최적 배송 순서 계산 (최대 3분)")
+            self._step("5단계 — 그룹핑 + 도로시간 수집 + 배송순서 최적화", 0.72)
+            self._log(f"\n{'─'*36}"); self._log("  5단계   그룹핑 → 도로시간 수집 → TSP 최적화")
             self._log("─" * 36)
-            ordered = optimize_route(nodes, matrix, headers)
+            ordered = optimize_route(nodes, matrix, headers, log_cb=self._log)
             if self._stopped(): self._abort(); return
             if ordered is None:
                 self._log("❌  순서 계산 실패"); self._reset_btn(); return
