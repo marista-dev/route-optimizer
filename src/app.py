@@ -1012,7 +1012,6 @@ class App(ctk.CTk):
                                        stop_event=self._stop_evt,
                                        log_cb=self._log)
             if self._stopped(): self._abort(); return
-            self._log(f"
             self._log(f"\n✅  4단계 완료 — {len(nodes)}개 지점, 클러스터 순서 확정")
 
             # 5단계
