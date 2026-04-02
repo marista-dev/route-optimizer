@@ -1078,22 +1078,17 @@ class App(ctk.CTk):
             wb.save(out_xlsx)
             self._log(f"✅  xlsx 저장: {os.path.basename(out_xlsx)}")
 
-            # ── ② CSV 저장 (배송순서, 이름, 택배받을 주소, Latitude, Longitude) ──
-            csv_cols = ['배송순서', '이름', '택배받을 주소', 'Latitude', 'Longitude']
-
-            df_out = df.copy()
-            df_out['배송순서'] = df_out.index.map(mapping)
-            df_out = df_out.dropna(subset=['배송순서'])
-            df_out['배송순서'] = df_out['배송순서'].astype(int)
-            df_out = df_out.sort_values('배송순서').reset_index(drop=True)
-
-            # 없는 열은 빈 값으로
-            for c in csv_cols:
-                if c not in df_out.columns:
-                    df_out[c] = ''
+            # ── ② CSV 저장 — XLSX 완성본에서 추출 (이름-주소 매칭 보장) ──
+            csv_cols = ['배송순서', '이름', '택배받을 주소']
+            df_xlsx = pd.read_excel(out_xlsx)
+            # XLSX에 있는 열만 선택
+            available = [c for c in csv_cols if c in df_xlsx.columns]
+            df_csv = df_xlsx[available].dropna(subset=['배송순서']).copy()
+            df_csv['배송순서'] = df_csv['배송순서'].astype(int)
+            df_csv = df_csv.sort_values('배송순서').reset_index(drop=True)
 
             out_csv = f"{base}_배송순서완성.csv"
-            df_out[csv_cols].to_csv(out_csv, index=False, encoding='utf-8-sig')
+            df_csv.to_csv(out_csv, index=False, encoding='utf-8-sig')
             self._log(f"✅  csv 저장: {os.path.basename(out_csv)}")
 
             return out_xlsx
