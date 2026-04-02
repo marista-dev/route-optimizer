@@ -3,13 +3,14 @@ optimizer.py
 카카오 모빌리티 API + Cluster-First Route-Second 배송 순서 최적화
 
 전략:
-  1. K-Means 클러스터링으로 배송지를 적절한 군집으로 분할
-  2. 출발지(사무실)에서 각 클러스터 중심까지 카카오 API 실제 주행시간으로
+  1. 같은 건물/주소 노드를 먼저 그룹핑 (동호수만 다른 경우 묶음)
+  2. K-Means 클러스터링으로 배송지를 적절한 군집으로 분할
+  3. 출발지(사무실)에서 각 클러스터까지 카카오 API 실제 주행시간으로
      가장 가까운 클러스터부터 Nearest Neighbor 순서 결정
-  3. 각 클러스터 내부에서 OR-Tools TSP로 최적 경로 계산
+  4. 각 클러스터 내부에서 OR-Tools TSP로 최적 경로 계산
+     - 그룹은 대표 노드 1개로 TSP에 참여, 나머지는 대표 뒤에 연속 배치
      - IN 포인트: 이전 클러스터에서 넘어오는 지점
      - OUT 포인트: 다음 클러스터와 가장 가까운 지점
-  4. 같은 건물/주소 노드 연속 배치 후처리
 
 공개 API (app.py 호환):
   - build_time_matrix(nodes, headers, progress_cb, stop_event)
@@ -93,6 +94,83 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
          math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
          math.sin(dlon / 2) ** 2)
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# ── 같은 위치 그룹핑 (TSP 이전에 수행) ───────────────────────────────────────
+def _strip_unit(address: str) -> str:
+    """동/호/층 번호를 제거한 기본 주소 반환 (같은 건물 단위 비교용)."""
+    s = re.sub(r'\d+동\s*\d+호|\d+층.*|\d+호', '', address)
+    s = re.sub(r'\s+', ' ', s).strip().lower()
+    return s
+
+
+def _build_location_groups(node_indices: list, nodes: list) -> dict:
+    """
+    같은 건물/주소 노드를 그룹으로 묶는다.
+    TSP에 넣기 전에 호출하여, 같은 건물 노드가 반드시 연속 배치되도록 보장.
+
+    기준:
+    1. 동일 좌표 (소수점 5자리 ≈ 1m 이내)
+    2. 동일 기본 주소 (동호수 제거 후 비교)
+
+    Parameters
+    ----------
+    node_indices : 배송지 노드 인덱스 리스트 (전역 인덱스)
+    nodes        : 전체 노드 리스트
+
+    Returns
+    -------
+    {
+        대표노드_인덱스: [대표노드, 같은건물노드1, 같은건물노드2, ...],
+        ...
+    }
+    그룹이 1개인 노드도 포함됨. 대표노드 = 그룹 내 첫 번째 노드.
+    """
+    def _coord_key(ni: int) -> tuple:
+        n = nodes[ni]
+        return (round(n['lat'], 5), round(n['lon'], 5))
+
+    def _addr_key(ni: int) -> str:
+        addr = nodes[ni].get('address', '')
+        return _strip_unit(addr) if addr else ''
+
+    # 각 노드를 그룹 키에 매핑
+    coord_groups = {}  # coord_key → [node_indices]
+    addr_groups  = {}  # addr_key  → [node_indices]
+    assigned     = {}  # node_index → 대표노드_인덱스
+
+    for ni in node_indices:
+        if ni in assigned:
+            continue
+
+        ck = _coord_key(ni)
+        ak = _addr_key(ni)
+
+        # 이미 같은 좌표 그룹이 있는지 확인
+        if ck in coord_groups:
+            rep = coord_groups[ck]
+            assigned[ni] = rep
+            continue
+
+        # 이미 같은 주소 그룹이 있는지 확인
+        if ak and ak in addr_groups:
+            rep = addr_groups[ak]
+            assigned[ni] = rep
+            continue
+
+        # 새 그룹 생성 (자기 자신이 대표)
+        assigned[ni] = ni
+        coord_groups[ck] = ni
+        if ak:
+            addr_groups[ak] = ni
+
+    # 대표 → 멤버 리스트로 변환
+    groups = {}
+    for ni in node_indices:
+        rep = assigned[ni]
+        groups.setdefault(rep, []).append(ni)
+
+    return groups
 
 
 # ── 클러스터링 ────────────────────────────────────────────────────────────────
@@ -210,7 +288,6 @@ def build_time_matrix(nodes: list, headers: dict,
     if saved and saved.get('n') == n:
         matrix = saved.get('matrix')
         if matrix and len(matrix) == n and len(matrix[0]) == n:
-            # 이미 완성된 행렬인지 확인
             remaining = sum(1 for i in range(n) for j in range(n)
                             if i != j and matrix[i][j] is None)
             if remaining == 0:
@@ -227,7 +304,6 @@ def build_time_matrix(nodes: list, headers: dict,
     # 클러스터링
     k = _determine_k(len(delivery_nodes))
     if k <= 1:
-        # 클러스터 1개 = 전체 N×N 계산
         clusters = {0: delivery_nodes}
     else:
         labels = _kmeans_cluster(coords, k)
@@ -236,9 +312,6 @@ def build_time_matrix(nodes: list, headers: dict,
             clusters.setdefault(label, []).append(delivery_nodes[idx])
 
     # 필요한 쌍 목록 구성
-    # 1) 출발지 → 각 클러스터 중심에 가장 가까운 노드 (최소 각 클러스터 1개)
-    # 2) 클러스터 내부 모든 쌍
-    # 3) 인접 클러스터 간 연결 후보 (경계 노드)
     pairs_needed = set()
 
     # 출발지(0) ↔ 모든 배송지
@@ -253,13 +326,12 @@ def build_time_matrix(nodes: list, headers: dict,
                 if i != j:
                     pairs_needed.add((i, j))
 
-    # 클러스터 간 경계 노드 (각 클러스터에서 다른 클러스터와 가장 가까운 3개씩)
+    # 클러스터 간 경계 노드
     cluster_ids = sorted(clusters.keys())
     for ci in cluster_ids:
         for cj in cluster_ids:
             if ci == cj:
                 continue
-            # ci의 모든 노드 → cj의 모든 노드 중 거리가 가까운 쌍
             border_pairs = []
             for ni in clusters[ci]:
                 for nj in clusters[cj]:
@@ -267,7 +339,6 @@ def build_time_matrix(nodes: list, headers: dict,
                                       nodes[nj]['lat'], nodes[nj]['lon'])
                     border_pairs.append((d, ni, nj))
             border_pairs.sort()
-            # 상위 min(5, 전체) 쌍만 API 호출
             for _, ni, nj in border_pairs[:min(5, len(border_pairs))]:
                 pairs_needed.add((ni, nj))
                 pairs_needed.add((nj, ni))
@@ -303,7 +374,7 @@ def build_time_matrix(nodes: list, headers: dict,
             if i != j and matrix[i][j] is None:
                 dist_km = _haversine_km(nodes[i]['lat'], nodes[i]['lon'],
                                          nodes[j]['lat'], nodes[j]['lon'])
-                matrix[i][j] = int(dist_km / 40.0 * 3600)  # 초 단위
+                matrix[i][j] = int(dist_km / 40.0 * 3600)
 
     _save_checkpoint({'n': n, 'matrix': matrix})
     return matrix
@@ -317,24 +388,23 @@ def _order_clusters(nodes: list, clusters: dict, matrix: list) -> list:
 
     Returns
     -------
-    [(cluster_id, entry_node_idx), ...]  순서대로 정렬된 클러스터 목록
+    [(cluster_id, entry_node_idx), ...]
     """
     if len(clusters) == 1:
         cid = list(clusters.keys())[0]
-        # 출발지에서 가장 가까운 노드를 entry로
         best_node = min(clusters[cid],
                         key=lambda ni: matrix[0][ni]
                         if matrix[0][ni] is not None else float('inf'))
         return [(cid, best_node)]
 
-    remaining  = set(clusters.keys())
-    ordered    = []
-    current    = 0  # 현재 위치 = nodes[0] (출발지)
+    remaining = set(clusters.keys())
+    ordered   = []
+    current   = 0  # 현재 위치 = nodes[0] (출발지)
 
     while remaining:
-        best_cid   = None
-        best_node  = None
-        best_time  = float('inf')
+        best_cid  = None
+        best_node = None
+        best_time = float('inf')
 
         for cid in remaining:
             for ni in clusters[cid]:
@@ -345,7 +415,6 @@ def _order_clusters(nodes: list, clusters: dict, matrix: list) -> list:
                     best_node = ni
 
         if best_cid is None:
-            # fallback: Haversine 거리 기반
             for cid in remaining:
                 clat, clon = _cluster_centroid(nodes, clusters[cid])
                 d = _haversine_km(nodes[current]['lat'], nodes[current]['lon'],
@@ -358,9 +427,6 @@ def _order_clusters(nodes: list, clusters: dict, matrix: list) -> list:
         ordered.append((best_cid, best_node))
         remaining.discard(best_cid)
 
-        # 다음 클러스터 탐색 시 "현재 위치"를 이 클러스터의 중심 노드로 이동
-        # → 실제로는 클러스터 내 TSP 후 exit 노드가 되지만,
-        #   순서 결정 단계에서는 중심에 가장 가까운 노드 사용
         centroid = _cluster_centroid(nodes, clusters[best_cid])
         best_exit = min(clusters[best_cid],
                         key=lambda ni: _haversine_km(
@@ -371,28 +437,28 @@ def _order_clusters(nodes: list, clusters: dict, matrix: list) -> list:
     return ordered
 
 
-# ── 클러스터 내 TSP ───────────────────────────────────────────────────────────
-def _solve_cluster_tsp(member_indices: list,
+# ── 클러스터 내 TSP (그룹 대표 노드만 참여) ──────────────────────────────────
+def _solve_cluster_tsp(rep_indices: list,
                        entry_node: int,
                        exit_node: int | None,
                        nodes: list,
                        matrix: list) -> list:
     """
-    클러스터 내부 노드의 최적 순서를 OR-Tools로 계산.
+    클러스터 내부의 **대표 노드**들의 최적 순서를 OR-Tools로 계산.
 
     Parameters
     ----------
-    member_indices : 이 클러스터에 속한 전역 노드 인덱스 리스트
-    entry_node     : 진입 노드 (전역 인덱스) — 반드시 첫 번째
-    exit_node      : 퇴장 노드 (전역 인덱스) — 있으면 반드시 마지막. None이면 자유
-    nodes          : 전체 노드 리스트
-    matrix         : 전체 시간 행렬
+    rep_indices : 이 클러스터의 대표 노드 인덱스 리스트 (전역 인덱스)
+    entry_node  : 진입 노드 — 반드시 첫 번째
+    exit_node   : 퇴장 노드 — 있으면 반드시 마지막. None이면 자유
+    nodes       : 전체 노드 리스트
+    matrix      : 전체 시간 행렬
 
     Returns
     -------
-    member_indices를 최적 순서로 재배열한 리스트
+    rep_indices를 최적 순서로 재배열한 리스트
     """
-    members = list(member_indices)
+    members = list(rep_indices)
     n = len(members)
 
     if n <= 1:
@@ -428,7 +494,7 @@ def _solve_cluster_tsp(member_indices: list,
         local_matrix.append(row)
 
     # Open TSP: entry(0) → ... → exit(dummy)
-    start_idx = 0  # entry는 항상 local index 0
+    start_idx = 0
     dummy = n
 
     ext = [[0] * (n + 1) for _ in range(n + 1)]
@@ -440,12 +506,8 @@ def _solve_cluster_tsp(member_indices: list,
     # exit_node가 지정된 경우: exit으로 끝나도록 유도
     if exit_node is not None and exit_node in global_to_local:
         exit_local = global_to_local[exit_node]
-        # exit → dummy 비용 = 0, 나머지 → dummy 비용 = 큰 페널티
         for i in range(n):
-            if i == exit_local:
-                ext[i][dummy] = 0
-            else:
-                ext[i][dummy] = 999_999
+            ext[i][dummy] = 999_999 if i != exit_local else 0
 
     manager = pywrapcp.RoutingIndexManager(n + 1, 1, [start_idx], [dummy])
     routing = pywrapcp.RoutingModel(manager)
@@ -461,12 +523,10 @@ def _solve_cluster_tsp(member_indices: list,
         routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
     params.local_search_metaheuristic = (
         routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-    # 클러스터 내부는 소규모이므로 시간 제한 짧게
     params.time_limit.seconds = max(10, n * 3)
 
     sol = routing.SolveWithParameters(params)
     if not sol:
-        # fallback: Nearest Neighbor
         return _nearest_neighbor_order(members, local_matrix)
 
     order = []
@@ -530,70 +590,17 @@ def _find_exit_node(cluster_members: list, next_cluster_members: list,
     return best_node
 
 
-# ── 같은 위치 그룹핑 ─────────────────────────────────────────────────────────
-def _strip_unit(address: str) -> str:
-    """동/호/층 번호를 제거한 기본 주소 반환 (같은 건물 단위 비교용)."""
-    s = re.sub(r'\d+동\s*\d+호|\d+층.*|\d+호', '', address)
-    s = re.sub(r'\s+', ' ', s).strip().lower()
-    return s
-
-
-def _group_same_location(order: list, nodes: list) -> list:
-    """
-    최적화 결과에서 동일 좌표(같은 건물/주소) 노드를 연속 배치하는 후처리.
-
-    기준:
-    1. 동일 좌표 (소수점 5자리 ≈ 1m 이내)
-    2. 동일 기본 주소 (동호수 제거 후 비교)
-
-    효과: 같은 건물에 호수만 다른 주소가 흩어져 있어도 연속 배치됨.
-    """
-    def _coord_key(ni: int) -> tuple:
-        n = nodes[ni]
-        return (round(n['lat'], 5), round(n['lon'], 5))
-
-    def _addr_key(ni: int) -> str:
-        addr = nodes[ni].get('address', '')
-        return _strip_unit(addr) if addr else ''
-
-    result     = []
-    coord_seen = {}  # coord_key → result 내 마지막 삽입 위치
-    addr_seen  = {}  # addr_key  → result 내 마지막 삽입 위치
-
-    for ni in order:
-        ck = _coord_key(ni)
-        ak = _addr_key(ni)
-
-        insert_at = None
-        if ck in coord_seen:
-            insert_at = coord_seen[ck] + 1
-        elif ak and ak in addr_seen:
-            insert_at = addr_seen[ak] + 1
-
-        if insert_at is not None:
-            result.insert(insert_at, ni)
-            # 삽입 위치 이후의 모든 인덱스를 +1 보정
-            for d in (coord_seen, addr_seen):
-                for k in d:
-                    if d[k] >= insert_at:
-                        d[k] += 1
-            coord_seen[ck] = insert_at
-            if ak:
-                addr_seen[ak] = insert_at
-        else:
-            pos = len(result)
-            result.append(ni)
-            coord_seen[ck] = pos
-            if ak:
-                addr_seen[ak] = pos
-
-    return result  # ← 기존 버그(`return order`) 수정됨
-
-
 # ── 메인 최적화 ──────────────────────────────────────────────────────────────
 def optimize_route(nodes: list, time_matrix: list):
     """
     Cluster-First, Route-Second 배송 순서 최적화.
+
+    실행 순서:
+    1. 같은 건물/주소 그룹핑 (동호수만 다르면 하나로 묶음)
+    2. K-Means 클러스터링 (대표 노드 좌표 기준)
+    3. 클러스터 순서 결정 (사무실→카카오 API 최단 주행시간)
+    4. 각 클러스터 내 TSP (대표 노드만 참여)
+    5. 대표 노드 뒤에 같은 건물 멤버 펼침 → 최종 순서
 
     Parameters
     ----------
@@ -604,15 +611,6 @@ def optimize_route(nodes: list, time_matrix: list):
     Returns
     -------
     배송 순서대로 정렬된 node index 리스트 (출발지 제외) or None
-
-    알고리즘:
-    1. 배송지를 K-Means 클러스터링
-    2. 출발지에서 카카오 API 주행시간 기준 Nearest Neighbor로 클러스터 순서 결정
-    3. 각 클러스터 내에서:
-       - entry: 이전 클러스터의 exit에서 가장 가까운 이 클러스터 노드
-       - exit:  다음 클러스터의 entry 후보 중 가장 가까운 이 클러스터 노드
-       - OR-Tools TSP로 entry → ... → exit 경로 계산
-    4. 같은 건물/주소 노드 연속 배치 후처리
     """
     n = len(nodes)
     if n <= 1:
@@ -622,53 +620,67 @@ def optimize_route(nodes: list, time_matrix: list):
 
     delivery_nodes = list(range(1, n))
 
-    # ── 1) 클러스터링 ────────────────────────────────────────────────────────
-    coords = [(nodes[i]['lat'], nodes[i]['lon']) for i in delivery_nodes]
-    k = _determine_k(len(delivery_nodes))
+    # ── 1) 같은 건물/주소 그룹핑 ─────────────────────────────────────────────
+    #    {대표노드: [대표, 멤버1, 멤버2, ...], ...}
+    location_groups = _build_location_groups(delivery_nodes, nodes)
+
+    # 대표 노드 리스트 (TSP에는 대표만 참여)
+    rep_nodes = list(location_groups.keys())
+
+    # ── 2) 클러스터링 (대표 노드 좌표 기준) ──────────────────────────────────
+    coords = [(nodes[i]['lat'], nodes[i]['lon']) for i in rep_nodes]
+    k = _determine_k(len(rep_nodes))
 
     if k <= 1:
-        clusters = {0: delivery_nodes}
+        clusters = {0: rep_nodes}
     else:
         labels = _kmeans_cluster(coords, k)
         clusters = {}
         for idx, label in enumerate(labels):
-            clusters.setdefault(label, []).append(delivery_nodes[idx])
+            clusters.setdefault(label, []).append(rep_nodes[idx])
 
-    # ── 2) 클러스터 순서 결정 (카카오 API 주행시간 기준) ─────────────────────
+    # ── 3) 클러스터 순서 결정 (카카오 API 주행시간 기준) ─────────────────────
     cluster_order = _order_clusters(nodes, clusters, time_matrix)
 
-    # ── 3) 각 클러스터 내 TSP ────────────────────────────────────────────────
-    final_order = []
+    # ── 4) 각 클러스터 내 TSP (대표 노드만) ──────────────────────────────────
+    rep_order = []  # 대표 노드의 최적 순서
 
     for step, (cid, entry_node) in enumerate(cluster_order):
         members = clusters[cid]
 
-        # exit 포인트: 다음 클러스터가 있으면 가장 가까운 노드
+        # exit 포인트: 다음 클러스터가 있으면 가장 가까운 대표 노드
         if step + 1 < len(cluster_order):
             next_cid = cluster_order[step + 1][0]
             next_members = clusters[next_cid]
             exit_node = _find_exit_node(members, next_members,
                                          nodes, time_matrix)
         else:
-            exit_node = None  # 마지막 클러스터는 자유 종료
+            exit_node = None
 
-        # 이전 클러스터의 마지막 노드에서 가장 가까운 entry 재계산
-        if final_order:
-            last_node = final_order[-1]
+        # 이전 클러스터의 마지막 대표에서 가장 가까운 entry 재계산
+        if rep_order:
+            last_rep = rep_order[-1]
             best_entry = min(
                 members,
-                key=lambda ni: time_matrix[last_node][ni]
-                if time_matrix[last_node][ni] is not None
+                key=lambda ni: time_matrix[last_rep][ni]
+                if time_matrix[last_rep][ni] is not None
                 else float('inf'))
             entry_node = best_entry
 
-        # 클러스터 내 TSP 풀기
+        # 클러스터 내 TSP (대표 노드만 참여)
         cluster_route = _solve_cluster_tsp(
             members, entry_node, exit_node, nodes, time_matrix)
 
-        final_order.extend(cluster_route)
+        rep_order.extend(cluster_route)
 
-    # ── 4) 같은 위치 그룹핑 후처리 ──────────────────────────────────────────
-    final_order = _group_same_location(final_order, nodes)
+    # ── 5) 대표 노드 뒤에 같은 건물 멤버 펼침 ────────────────────────────────
+    #    대표 순서대로, 대표 + 멤버들을 연속 배치
+    final_order = []
+    for rep in rep_order:
+        group_members = location_groups[rep]
+        # 대표는 이미 첫 번째에 있음. 나머지 멤버를 바로 뒤에 배치
+        for member in group_members:
+            if member not in final_order:
+                final_order.append(member)
 
     return final_order
