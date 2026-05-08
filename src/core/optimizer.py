@@ -26,10 +26,18 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
+
+# HTTP keep-alive 세션 (병렬 스레드 안전)
+_SESSION = requests.Session()
+
+# 병렬 워커 수 — 카카오 모빌리티 API의 미공개 rate limit을 고려해 보수적으로 3개
+# (50회 burst에서 429 보고 사례 기준)
+_API_WORKERS = 3
 
 # ── 체크포인트 ────────────────────────────────────────────────────────────────
 _CHECKPOINT_DIR = os.path.join(
@@ -63,7 +71,7 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
               'priority':    'RECOMMEND'}
     for _ in range(5):
         try:
-            resp = requests.get(url, headers=headers, params=params, timeout=7)
+            resp = _SESSION.get(url, headers=headers, params=params, timeout=7)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('routes') and data['routes'][0]['result_code'] == 0:
@@ -184,25 +192,36 @@ def build_time_matrix(nodes: list, headers: dict,
 
     total_api = len(pairs_todo)
     _log(f"\n  4-2)  대표 노드 간 도로 시간 계산 중 (카카오 API)...")
-    _log(f"       대표 {len(rep_nodes)}개 + 출발지 → {total_api}쌍 호출 예정")
+    _log(f"       대표 {len(rep_nodes)}개 + 출발지 → {total_api}쌍 호출 예정 (병렬 {_API_WORKERS}개)")
 
     done_api = 0
-    for i, j in pairs_todo:
-        if stop_event and stop_event.is_set():
-            _save_checkpoint({'n': n, 'matrix': matrix})
-            return matrix, location_groups
+    if total_api > 0:
+        with ThreadPoolExecutor(max_workers=_API_WORKERS) as executor:
+            future_to_pair = {
+                executor.submit(_get_driving_time,
+                                nodes[i]['lon'], nodes[i]['lat'],
+                                nodes[j]['lon'], nodes[j]['lat'],
+                                headers): (i, j)
+                for i, j in pairs_todo
+            }
 
-        matrix[i][j] = _get_driving_time(
-            nodes[i]['lon'], nodes[i]['lat'],
-            nodes[j]['lon'], nodes[j]['lat'],
-            headers)
-        time.sleep(0.15)
-        done_api += 1
+            for future in as_completed(future_to_pair):
+                if stop_event and stop_event.is_set():
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    _save_checkpoint({'n': n, 'matrix': matrix})
+                    return matrix, location_groups
 
-        if done_api % 50 == 0:
-            _log(f"       →  {done_api} / {total_api} 완료")
-            if progress_cb:
-                progress_cb(done_api, total_api)
+                i, j = future_to_pair[future]
+                try:
+                    matrix[i][j] = future.result()
+                except Exception:
+                    matrix[i][j] = 999_999
+                done_api += 1
+
+                if done_api % 50 == 0:
+                    _log(f"       →  {done_api} / {total_api} 완료")
+                    if progress_cb:
+                        progress_cb(done_api, total_api)
 
     # all_indices 내 None 셀만 Haversine 추정치로 채움
     # (optimize_route는 이 범위만 참조 — 비-대표 셀 낭비 방지)

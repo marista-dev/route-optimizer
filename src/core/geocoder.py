@@ -10,8 +10,11 @@ import re
 import time
 import requests
 
+# HTTP keep-alive 세션 (병렬 스레드 안전)
+_SESSION = requests.Session()
 
-# ── 지오코딩 ─────────────────────────────────────────────────────────────────
+
+# 지오코딩
 
 def _build_queries(address: str) -> list:
     queries = [address]
@@ -31,7 +34,7 @@ def geocode(address: str, headers: dict) -> dict | None:
     url = 'https://dapi.kakao.com/v2/local/search/address.json'
     for query in _build_queries(address):
         try:
-            resp = requests.get(url, headers=headers,
+            resp = _SESSION.get(url, headers=headers,
                                 params={'query': query}, timeout=7)
             if resp.status_code == 200:
                 docs = resp.json().get('documents', [])
@@ -55,7 +58,7 @@ def reverse_geocode(lat: float, lon: float, headers: dict) -> str:
     """위도/경도 → 도로명(또는 지번) 주소 문자열"""
     url = 'https://dapi.kakao.com/v2/local/geo/coord2address.json'
     try:
-        resp = requests.get(url, headers=headers,
+        resp = _SESSION.get(url, headers=headers,
                             params={'x': lon, 'y': lat,
                                     'input_coord': 'WGS84'}, timeout=7)
         if resp.status_code == 200:

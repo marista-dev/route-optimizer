@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import webbrowser
 
@@ -919,46 +920,93 @@ class App(ctk.CTk):
             self._step("2단계 — 배송지 위치 확인 중", 0.15)
             self._log(f"\n{'─'*36}"); self._log("  2단계   각 배송지 위치 확인")
             self._log("─" * 36)
-            lats, lons, k_addrs = [], [], []
-            for i, (_, row) in enumerate(df.iterrows()):
-                if self._stopped(): self._abort(); return
-                r    = geocode(row['택배받을 주소'], headers)
-                name = row.get('이름', '')
-                time.sleep(0.15)
-                if r:
-                    lats.append(r['lat']); lons.append(r['lon'])
-                    k_addrs.append(r['kakao_road_addr'])
-                    self._log(f"  ✅  ({i+1}/{total})  {name}")
-                else:
-                    lats.append(None); lons.append(None); k_addrs.append('')
-                    self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 위치 못 찾음")
-                self._step("2단계 — 배송지 위치 확인 중",
-                           0.15 + (i + 1) / total * 0.15)
-            df['Latitude']      = lats
-            df['Longitude']     = lons
-            df['카카오_확인주소'] = k_addrs
-            self._log(f"\n✅  2단계 완료 — {sum(1 for v in lats if v)}/{total}건")
+
+            # 병렬 geocoding (카카오 Local API — 안전하게 5개 워커)
+            _GEO_WORKERS = 5
+            geo_results = [None] * total
+            row_meta = [(i, row.get('이름', ''), row['택배받을 주소'])
+                        for i, (_, row) in enumerate(df.iterrows())]
+
+            with ThreadPoolExecutor(max_workers=_GEO_WORKERS) as executor:
+                future_to_meta = {
+                    executor.submit(geocode, addr, headers): (i, name)
+                    for i, name, addr in row_meta
+                }
+                done = 0
+                for future in as_completed(future_to_meta):
+                    if self._stopped():
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        self._abort(); return
+                    i, name = future_to_meta[future]
+                    try:
+                        geo_results[i] = future.result()
+                    except Exception:
+                        geo_results[i] = None
+                    done += 1
+                    if geo_results[i]:
+                        self._log(f"  ✅  ({i+1}/{total})  {name}")
+                    else:
+                        self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 위치 못 찾음")
+                    self._step("2단계 — 배송지 위치 확인 중",
+                               0.15 + done / total * 0.15)
+
+            df['Latitude']      = [r['lat'] if r else None for r in geo_results]
+            df['Longitude']     = [r['lon'] if r else None for r in geo_results]
+            df['카카오_확인주소'] = [r['kakao_road_addr'] if r else '' for r in geo_results]
+            self._log(f"\n✅  2단계 완료 — {sum(1 for r in geo_results if r)}/{total}건")
             if self._stopped(): self._abort(); return
 
             # 3단계
             self._step("3단계 — 주소 정확도 검사 중", 0.32)
             self._log(f"\n{'─'*36}"); self._log("  3단계   주소 정확도 검사")
             self._log("─" * 36)
+
+            # Pass 1: 좌표 있는 행만 병렬 reverse_geocode (안전하게 5개 워커)
+            _RGEO_WORKERS = 5
+            df_rows = list(df.iterrows())
+            rev_results = [''] * total
+            coord_items = []
+            for i, (_, row) in enumerate(df_rows):
+                lat, lon = row['Latitude'], row['Longitude']
+                if pd.notna(lat) and pd.notna(lon):
+                    coord_items.append((i, lat, lon))
+
+            if coord_items:
+                with ThreadPoolExecutor(max_workers=_RGEO_WORKERS) as executor:
+                    future_to_idx = {
+                        executor.submit(reverse_geocode, lat, lon, headers): i
+                        for i, lat, lon in coord_items
+                    }
+                    done = 0
+                    for future in as_completed(future_to_idx):
+                        if self._stopped():
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            self._abort(); return
+                        idx = future_to_idx[future]
+                        try:
+                            rev_results[idx] = future.result() or ''
+                        except Exception:
+                            rev_results[idx] = ''
+                        done += 1
+                        # 역지오코딩에 3단계 예산의 절반 할당
+                        self._step("3단계 — 역지오코딩 수집 중",
+                                   0.32 + done / len(coord_items) * 0.06)
+
+            # Pass 2: 순차 verify + 팝업 (팝업은 동시 조작 불가 → 병렬 안 함)
             revs, verdicts, fix_cnt = [], [], 0
-            for i, (di, row) in enumerate(df.iterrows()):
+            for i, (di, row) in enumerate(df_rows):
                 if self._stopped(): self._abort(); return
                 lat, lon = row['Latitude'], row['Longitude']
                 name     = row.get('이름', f'항목{i+1}')
+                rev      = rev_results[i]
                 if pd.notna(lat) and pd.notna(lon):
-                    rev     = reverse_geocode(lat, lon, headers)
-                    time.sleep(0.15)
                     verdict = verify_address(row['택배받을 주소'], rev)
                 else:
-                    rev, verdict = '', '위치없음'
+                    verdict = '위치없음'
                 if verdict not in ('일치', '위치없음', '확인불가'):
                     self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 불일치 → 팝업 확인")
                     self._step("⚠️  불일치 — 팝업에서 주소를 검색해주세요",
-                               0.32 + (i + 1) / total * 0.13, _WARN)
+                               0.38 + (i + 1) / total * 0.07, _WARN)
                     ev, holder = threading.Event(), {}
                     self.after(0, self._open_fix, headers, name,
                                row['택배받을 주소'], rev, ev, holder)
@@ -979,7 +1027,7 @@ class App(ctk.CTk):
                     self._log(f"  {icon}  ({i+1}/{total})  {name}  — {verdict}")
                 revs.append(rev); verdicts.append(verdict)
                 self._step("3단계 — 주소 정확도 검사 중",
-                           0.32 + (i + 1) / total * 0.13)
+                           0.38 + (i + 1) / total * 0.07)
             df['역지오코딩_주소'] = revs; df['주소검증결과'] = verdicts
             warn_cnt = sum(1 for v in verdicts
                            if v not in ('일치','위치없음','확인불가','수정됨'))
