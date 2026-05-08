@@ -1049,7 +1049,7 @@ class App(ctk.CTk):
         try:
             base = os.path.splitext(self.file_path)[0]
 
-            # ── ① 배송순서 열 작성 후 오름차순 정렬된 xlsx 저장 ──────────────
+            # ── ① xlsx 저장 ───────────────────────────────────────────────────
             wb   = load_workbook(self.file_path)
             ws   = wb.active
             hrow = [c.value for c in ws[1]]
@@ -1057,19 +1057,25 @@ class App(ctk.CTk):
             if '배송순서' in hrow:
                 col = hrow.index('배송순서') + 1
                 self._log("  '배송순서' 열 존재 → 덮어씁니다")
+                # 재실행 시 이전 값 잔존 방지 — 열 전체 초기화
+                for r in range(2, ws.max_row + 1):
+                    ws.cell(row=r, column=col, value=None)
             else:
                 ws.insert_cols(1)
                 ws.cell(row=1, column=1, value='배송순서')
                 col = 1
                 self._log("  '배송순서' 열 없음 → 첫 번째 열에 추가")
 
-            # 배송순서 값 입력
             for df_idx, order_val in mapping.items():
                 ws.cell(row=df_idx + 2, column=col, value=order_val)
 
-            # 데이터 행 전체를 배송순서 기준 오름차순 정렬
+            # 타입 안전 정렬 키 — 문자열·None 혼재 시 TypeError 방지
+            def _row_sort_key(r):
+                v = r[col - 1]
+                return (0, v) if isinstance(v, (int, float)) else (1, 0)
+
             data_rows = list(ws.iter_rows(min_row=2, values_only=True))
-            data_rows.sort(key=lambda r: (r[col - 1] is None, r[col - 1]))
+            data_rows.sort(key=_row_sort_key)
             for row_idx, row_data in enumerate(data_rows, start=2):
                 for c_idx, val in enumerate(row_data, start=1):
                     ws.cell(row=row_idx, column=c_idx, value=val)
@@ -1078,12 +1084,19 @@ class App(ctk.CTk):
             wb.save(out_xlsx)
             self._log(f"✅  xlsx 저장: {os.path.basename(out_xlsx)}")
 
-            # ── ② CSV 저장 — XLSX 완성본에서 추출 (이름-주소 매칭 보장) ──
-            csv_cols = ['배송순서', '이름', '택배받을 주소']
-            df_xlsx = pd.read_excel(out_xlsx)
-            # XLSX에 있는 열만 선택
+            # ── ② CSV 저장 — XLSX 완성본에서 추출 ────────────────────────────
+            csv_cols  = ['배송순서', '이름', '택배받을 주소']
+            df_xlsx   = pd.read_excel(out_xlsx)
             available = [c for c in csv_cols if c in df_xlsx.columns]
-            df_csv = df_xlsx[available].dropna(subset=['배송순서']).copy()
+
+            if '배송순서' not in available:
+                self._log("⚠️  CSV: '배송순서' 열을 찾을 수 없습니다.")
+                return out_xlsx
+
+            df_csv = df_xlsx[available].copy()
+            # to_numeric → dropna → astype(int) 순서로 안전하게 변환
+            df_csv['배송순서'] = pd.to_numeric(df_csv['배송순서'], errors='coerce')
+            df_csv = df_csv.dropna(subset=['배송순서']).copy()
             df_csv['배송순서'] = df_csv['배송순서'].astype(int)
             df_csv = df_csv.sort_values('배송순서').reset_index(drop=True)
 

@@ -3,7 +3,6 @@ geocoder.py
 카카오 로컬 API 래퍼
   - geocode        : 주소 → 위도/경도
   - reverse_geocode: 위도/경도 → 도로명 주소
-  - search_address : 주소 검색 결과 목록 (팝업용)
   - verify_address : 원본 주소 vs 역지오코딩 결과 정규화 비교
 """
 
@@ -71,29 +70,6 @@ def reverse_geocode(lat: float, lon: float, headers: dict) -> str:
     except Exception:
         pass
     return ''
-
-
-def search_address(query: str, headers: dict) -> list:
-    """주소 검색 결과 목록 → [{'address', 'lat', 'lon'}, ...]"""
-    url = 'https://dapi.kakao.com/v2/local/search/address.json'
-    try:
-        resp = requests.get(url, headers=headers,
-                            params={'query': query, 'size': 10}, timeout=7)
-        if resp.status_code == 200:
-            results = []
-            for doc in resp.json().get('documents', []):
-                road  = doc.get('road_address')
-                jibun = doc.get('address')
-                name  = (road['address_name'] if road
-                         else jibun['address_name'] if jibun else '')
-                if name:
-                    results.append({'address': name,
-                                    'lat': float(doc['y']),
-                                    'lon': float(doc['x'])})
-            return results
-    except Exception:
-        pass
-    return []
 
 
 # ── 주소 검증 ─────────────────────────────────────────────────────────────────

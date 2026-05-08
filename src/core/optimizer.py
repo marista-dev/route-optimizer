@@ -47,16 +47,6 @@ def _save_checkpoint(data: dict):
         json.dump(data, f)
 
 
-def _load_checkpoint() -> dict | None:
-    if os.path.exists(CHECKPOINT_FILE):
-        try:
-            with open(CHECKPOINT_FILE, encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return None
-
-
 def clear_checkpoint():
     """체크포인트 파일 삭제 (중단 또는 새 작업 시작 시 호출)."""
     global _last_location_groups, _last_rep_nodes
