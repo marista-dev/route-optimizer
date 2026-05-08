@@ -12,9 +12,11 @@ optimizer.py
        (출발 창고에서 시작, 총 주행시간 최소화)
     2. 대표 순서대로 같은 건물 멤버 펼침
 
-공개 API (app.py 호환):
+공개 API:
   - build_time_matrix(nodes, headers, progress_cb, stop_event, log_cb)
-  - optimize_route(nodes, time_matrix, headers, log_cb)
+      → (time_matrix, location_groups)
+  - optimize_route(nodes, time_matrix, location_groups, log_cb)
+      → final_order
   - clear_checkpoint()
 """
 
@@ -28,10 +30,6 @@ import time
 import requests
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
-
-# ── 4단계→5단계 전달용 모듈 변수 ─────────────────────────────────────────────
-_last_location_groups = None  # {대표노드: [대표, 멤버1, ...], ...}
-_last_rep_nodes       = None  # [대표노드 인덱스, ...]
 
 # ── 체크포인트 ────────────────────────────────────────────────────────────────
 _CHECKPOINT_DIR = os.path.join(
@@ -49,9 +47,6 @@ def _save_checkpoint(data: dict):
 
 def clear_checkpoint():
     """체크포인트 파일 삭제 (중단 또는 새 작업 시작 시 호출)."""
-    global _last_location_groups, _last_rep_nodes
-    _last_location_groups = None
-    _last_rep_nodes = None
     if os.path.exists(CHECKPOINT_FILE):
         try:
             os.remove(CHECKPOINT_FILE)
@@ -150,19 +145,19 @@ def _build_location_groups(node_indices: list, nodes: list) -> dict:
 def build_time_matrix(nodes: list, headers: dict,
                       progress_cb=None,
                       stop_event: threading.Event = None,
-                      log_cb=None) -> list:
+                      log_cb=None) -> tuple:
     """
     4단계: 그룹핑 → 대표 노드끼리 전체 N×N 카카오 API 호출.
-    """
-    global _last_location_groups, _last_rep_nodes
 
+    Returns: (time_matrix, location_groups)
+    """
     def _log(msg):
         if log_cb:
             log_cb(msg)
 
     n = len(nodes)
     if n <= 1:
-        return [[0]]
+        return [[0]], {}
 
     # 빈 행렬 초기화 (대각선 = 0)
     matrix = [[0 if i == j else None for j in range(n)] for i in range(n)]
@@ -178,20 +173,14 @@ def build_time_matrix(nodes: list, headers: dict,
     _log(f"  ✅  전체 {total_delivery}건 → 대표 {len(rep_nodes)}개 추출"
          f" (같은 건물 그룹 {grouped_cnt}개)")
 
-    _last_location_groups = location_groups
-    _last_rep_nodes = rep_nodes
-
     if stop_event and stop_event.is_set():
-        return matrix
+        return matrix, location_groups
 
     # ── 4-2) 대표 노드끼리 전체 N×N 카카오 API 호출 ──────────────────────────
     # 출발지(0) ↔ 대표 + 대표 ↔ 대표 전체 쌍
     all_indices = [0] + rep_nodes  # 출발지 + 모든 대표
-    pairs_todo = []
-    for i in all_indices:
-        for j in all_indices:
-            if i != j and matrix[i][j] is None:
-                pairs_todo.append((i, j))
+    pairs_todo = [(i, j) for i in all_indices for j in all_indices
+                  if i != j and matrix[i][j] is None]
 
     total_api = len(pairs_todo)
     _log(f"\n  4-2)  대표 노드 간 도로 시간 계산 중 (카카오 API)...")
@@ -201,20 +190,19 @@ def build_time_matrix(nodes: list, headers: dict,
     for i, j in pairs_todo:
         if stop_event and stop_event.is_set():
             _save_checkpoint({'n': n, 'matrix': matrix})
-            return matrix
+            return matrix, location_groups
 
-        if matrix[i][j] is None:
-            matrix[i][j] = _get_driving_time(
-                nodes[i]['lon'], nodes[i]['lat'],
-                nodes[j]['lon'], nodes[j]['lat'],
-                headers)
-            time.sleep(0.15)
-            done_api += 1
+        matrix[i][j] = _get_driving_time(
+            nodes[i]['lon'], nodes[i]['lat'],
+            nodes[j]['lon'], nodes[j]['lat'],
+            headers)
+        time.sleep(0.15)
+        done_api += 1
 
-            if done_api % 50 == 0:
-                _log(f"       →  {done_api} / {total_api} 완료")
-                if progress_cb:
-                    progress_cb(done_api, total_api)
+        if done_api % 50 == 0:
+            _log(f"       →  {done_api} / {total_api} 완료")
+            if progress_cb:
+                progress_cb(done_api, total_api)
 
     # all_indices 내 None 셀만 Haversine 추정치로 채움
     # (optimize_route는 이 범위만 참조 — 비-대표 셀 낭비 방지)
@@ -231,16 +219,15 @@ def build_time_matrix(nodes: list, headers: dict,
     if progress_cb:
         progress_cb(total_api, total_api)
 
-    return matrix
+    return matrix, location_groups
 
 
 # ── 5단계: OR-Tools TSP + 멤버 펼침 ──────────────────────────────────────────
-def optimize_route(nodes: list, time_matrix: list, log_cb=None):
+def optimize_route(nodes: list, time_matrix: list,
+                   location_groups: dict, log_cb=None):
     """
     5단계: 전체 대표 노드를 OR-Tools TSP로 한 번에 최적 순서 계산 → 멤버 펼침.
     """
-    global _last_location_groups, _last_rep_nodes
-
     def _log(msg):
         if log_cb:
             log_cb(msg)
@@ -251,32 +238,17 @@ def optimize_route(nodes: list, time_matrix: list, log_cb=None):
     if n == 2:
         return [1]
 
-    delivery_nodes = list(range(1, n))
-
-    # ── 4단계 결과 로드 ──────────────────────────────────────────────────────
-    location_groups = _last_location_groups
-    rep_nodes       = _last_rep_nodes
-
-    # 4단계 결과가 없으면 fallback
-    if location_groups is None:
-        location_groups = _build_location_groups(delivery_nodes, nodes)
-        rep_nodes = list(location_groups.keys())
+    rep_nodes = list(location_groups.keys())
+    num = len(rep_nodes)
 
     # ── 5-1) 전체 대표를 OR-Tools TSP로 최적 순서 계산 ───────────────────────
     _log("  5-1)  OR-Tools TSP 최적 순서 계산 중...")
-    _log(f"       대표 {len(rep_nodes)}개를 한 번에 최적화")
+    _log(f"       대표 {num}개를 한 번에 최적화")
 
-    members = list(rep_nodes)
-    num = len(members)
-
-    if num <= 1:
-        rep_order = members
-    elif num == 2:
-        rep_order = members
+    if num <= 2:
+        rep_order = list(rep_nodes)
     else:
-        # 로컬 인덱스 ↔ 전역 인덱스 매핑
-        # 로컬 0 = 출발지(전역 0), 로컬 1~ = 대표 노드
-        local_nodes = [0] + members  # 출발지 + 대표들
+        local_nodes = [0] + rep_nodes  # 출발지 + 대표들
         local_n = len(local_nodes)
 
         # 로컬 시간 행렬
@@ -335,18 +307,12 @@ def optimize_route(nodes: list, time_matrix: list, log_cb=None):
         else:
             # fallback: Nearest Neighbor
             _log("  ⚠️  TSP 실패 → Nearest Neighbor fallback")
-            rep_order = _nearest_neighbor_chain(
-                members, nodes, time_matrix)
+            rep_order = _nearest_neighbor_chain(rep_nodes, nodes, time_matrix)
             _log(f"  ✅  Nearest Neighbor 완료 — {len(rep_order)}개 순서 확정")
 
     # ── 5-2) 대표 순서대로 같은 건물 멤버 펼침 ───────────────────────────────
     _log(f"\n  5-2)  같은 건물 멤버 연속 배치 중...")
-    final_order = []
-    for rep in rep_order:
-        group_members = location_groups.get(rep, [rep])
-        for member in group_members:
-            if member not in final_order:
-                final_order.append(member)
+    final_order = [m for rep in rep_order for m in location_groups.get(rep, [rep])]
 
     _log(f"  ✅  최종 {len(final_order)}건 순서 확정")
 
