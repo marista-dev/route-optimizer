@@ -14,9 +14,9 @@ import socket
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
@@ -27,7 +27,7 @@ BASE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from core.geocoder  import geocode, reverse_geocode, verify_address
-from core.optimizer import build_time_matrix, optimize_route, clear_checkpoint
+from core.optimizer import build_time_matrix, optimize_route
 
 # ── 디자인 토큰 ───────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
@@ -815,7 +815,7 @@ class App(ctk.CTk):
     def _request_stop(self):
         if not messagebox.askyesno(
                 "중단 확인",
-                "작업을 중단하시겠습니까?\n\n저장된 도로 계산 데이터도 초기화됩니다."):
+                "작업을 중단하시겠습니까?"):
             return
         self._stop_evt.set()
         self.stop_btn.configure(state="disabled", text="⏹")
@@ -870,8 +870,6 @@ class App(ctk.CTk):
         return self._stop_evt.is_set()
 
     def _abort(self):
-        clear_checkpoint()
-        self._log("🗑️  저장된 도로 계산 데이터 초기화 완료")
         self._step("중단됨", 0, _DANGER)
         self._reset_btn()
 
@@ -988,7 +986,7 @@ class App(ctk.CTk):
                         except Exception:
                             rev_results[idx] = ''
                         done += 1
-                        # 역지오코딩에 3단계 예산의 절반 할당
+                        # 역지오코딩 진행률 (3단계 예산 0.13 중 0.06 할당)
                         self._step("3단계 — 역지오코딩 수집 중",
                                    0.32 + done / len(coord_items) * 0.06)
 
@@ -1054,7 +1052,6 @@ class App(ctk.CTk):
                 self._step("4단계 — 도로 시간 수집 중",
                            0.46 + done / tot * 0.24)
 
-            clear_checkpoint()
             matrix, groups = build_time_matrix(nodes, headers,
                                                 progress_cb=_prog,
                                                 stop_event=self._stop_evt,
@@ -1138,8 +1135,9 @@ class App(ctk.CTk):
             df_csv = df_csv.dropna(subset=['배송순서']).copy()
             df_csv['배송순서'] = df_csv['배송순서'].astype(int)
 
-            keep = [c for c in ['배송순서', '이름', '택배받을 주소'] if c in df_csv.columns]
-            df_csv = df_csv[keep].sort_values('배송순서').reset_index(drop=True)
+            # 배송순서를 맨 앞으로, 나머지 컴럼(Latitude/Longitude/검증 정보 등)은 원래 순서 유지
+            cols = ['배송순서'] + [c for c in df_csv.columns if c != '배송순서']
+            df_csv = df_csv[cols].sort_values('배송순서').reset_index(drop=True)
 
             out_csv = f"{base}_배송순서완성.csv"
             df_csv.to_csv(out_csv, index=False, encoding='utf-8-sig')

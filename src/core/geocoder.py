@@ -75,7 +75,7 @@ def reverse_geocode(lat: float, lon: float, headers: dict) -> str:
     return ''
 
 
-# ── 주소 검증 ─────────────────────────────────────────────────────────────────
+# 주소 검증
 
 def _normalize(s: str) -> str:
     s = re.sub(r'광주광역시', '광주', s)

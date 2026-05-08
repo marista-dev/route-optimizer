@@ -17,12 +17,9 @@ optimizer.py
       → (time_matrix, location_groups)
   - optimize_route(nodes, time_matrix, location_groups, log_cb)
       → final_order
-  - clear_checkpoint()
 """
 
-import json
 import math
-import os
 import re
 import threading
 import time
@@ -39,30 +36,7 @@ _SESSION = requests.Session()
 # (50회 burst에서 429 보고 사례 기준)
 _API_WORKERS = 3
 
-# ── 체크포인트 ────────────────────────────────────────────────────────────────
-_CHECKPOINT_DIR = os.path.join(
-    os.environ.get('APPDATA', os.path.expanduser('~')),
-    'RouteOptimizer'
-)
-CHECKPOINT_FILE = os.path.join(_CHECKPOINT_DIR, 'time_matrix.json')
-
-
-def _save_checkpoint(data: dict):
-    os.makedirs(_CHECKPOINT_DIR, exist_ok=True)
-    with open(CHECKPOINT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f)
-
-
-def clear_checkpoint():
-    """체크포인트 파일 삭제 (중단 또는 새 작업 시작 시 호출)."""
-    if os.path.exists(CHECKPOINT_FILE):
-        try:
-            os.remove(CHECKPOINT_FILE)
-        except Exception:
-            pass
-
-
-# ── 카카오 모빌리티 API ───────────────────────────────────────────────────────
+# 카카오 모빌리티 API
 def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
     """두 지점 간 자동차 주행 시간(초) 반환. 실패 시 999_999."""
     url    = 'https://apis-navi.kakaomobility.com/v1/directions'
@@ -84,7 +58,7 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
     return 999_999
 
 
-# ── 거리 유틸 ─────────────────────────────────────────────────────────────────
+# 거리 유틸
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     """두 좌표 간 Haversine 직선 거리(km)."""
     R = 6371.0
@@ -96,7 +70,7 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-# ── 같은 위치 그룹핑 ─────────────────────────────────────────────────────────
+# 같은 위치 그룹핑
 def _strip_unit(address: str) -> str:
     """동/호/층 번호를 제거한 기본 주소 반환 (같은 건물 단위 비교용)."""
     s = re.sub(r'\d+동\s*\d+호|\d+층.*|\d+호', '', address)
@@ -149,7 +123,7 @@ def _build_location_groups(node_indices: list, nodes: list) -> dict:
     return groups
 
 
-# ── 4단계: 그룹핑 + 전체 N×N API 호출 ────────────────────────────────────────
+# 4단계: 그룹핑 + 전체 N×N API 호출
 def build_time_matrix(nodes: list, headers: dict,
                       progress_cb=None,
                       stop_event: threading.Event = None,
@@ -170,21 +144,18 @@ def build_time_matrix(nodes: list, headers: dict,
     # 빈 행렬 초기화 (대각선 = 0)
     matrix = [[0 if i == j else None for j in range(n)] for i in range(n)]
 
-    delivery_nodes = list(range(1, n))
-
-    # ── 4-1) 같은 건물 그룹핑 → 대표 노드 추출 ──────────────────────────────
+    # 4-1) 같은 건물 그룹핑 → 대표 노드 추출
     _log("  4-1)  같은 건물/주소 그룹핑 중...")
-    location_groups = _build_location_groups(delivery_nodes, nodes)
+    location_groups = _build_location_groups(list(range(1, n)), nodes)
     rep_nodes = list(location_groups.keys())
     grouped_cnt = sum(1 for g in location_groups.values() if len(g) > 1)
-    total_delivery = len(delivery_nodes)
-    _log(f"  ✅  전체 {total_delivery}건 → 대표 {len(rep_nodes)}개 추출"
+    _log(f"  ✅  전체 {n - 1}건 → 대표 {len(rep_nodes)}개 추출"
          f" (같은 건물 그룹 {grouped_cnt}개)")
 
     if stop_event and stop_event.is_set():
         return matrix, location_groups
 
-    # ── 4-2) 대표 노드끼리 전체 N×N 카카오 API 호출 ──────────────────────────
+    # 4-2) 대표 노드끼리 전체 N×N 카카오 API 호출
     # 출발지(0) ↔ 대표 + 대표 ↔ 대표 전체 쌍
     all_indices = [0] + rep_nodes  # 출발지 + 모든 대표
     pairs_todo = [(i, j) for i in all_indices for j in all_indices
@@ -208,7 +179,6 @@ def build_time_matrix(nodes: list, headers: dict,
             for future in as_completed(future_to_pair):
                 if stop_event and stop_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
-                    _save_checkpoint({'n': n, 'matrix': matrix})
                     return matrix, location_groups
 
                 i, j = future_to_pair[future]
@@ -232,7 +202,6 @@ def build_time_matrix(nodes: list, headers: dict,
                                          nodes[j]['lat'], nodes[j]['lon'])
                 matrix[i][j] = int(dist_km / 40.0 * 3600)
 
-    _save_checkpoint({'n': n, 'matrix': matrix})
     _log(f"  ✅  도로 시간 계산 완료 — {done_api}쌍 호출")
 
     if progress_cb:
@@ -241,7 +210,7 @@ def build_time_matrix(nodes: list, headers: dict,
     return matrix, location_groups
 
 
-# ── 5단계: OR-Tools TSP + 멤버 펼침 ──────────────────────────────────────────
+# 5단계: OR-Tools TSP + 멤버 펼침
 def optimize_route(nodes: list, time_matrix: list,
                    location_groups: dict, log_cb=None):
     """
@@ -260,7 +229,7 @@ def optimize_route(nodes: list, time_matrix: list,
     rep_nodes = list(location_groups.keys())
     num = len(rep_nodes)
 
-    # ── 5-1) 전체 대표를 OR-Tools TSP로 최적 순서 계산 ───────────────────────
+    # 5-1) 전체 대표를 OR-Tools TSP로 최적 순서 계산
     _log("  5-1)  OR-Tools TSP 최적 순서 계산 중...")
     _log(f"       대표 {num}개를 한 번에 최적화")
 
@@ -329,7 +298,7 @@ def optimize_route(nodes: list, time_matrix: list,
             rep_order = _nearest_neighbor_chain(rep_nodes, nodes, time_matrix)
             _log(f"  ✅  Nearest Neighbor 완료 — {len(rep_order)}개 순서 확정")
 
-    # ── 5-2) 대표 순서대로 같은 건물 멤버 펼침 ───────────────────────────────
+    # 5-2) 대표 순서대로 같은 건물 멤버 펼침
     _log(f"\n  5-2)  같은 건물 멤버 연속 배치 중...")
     final_order = [m for rep in rep_order for m in location_groups.get(rep, [rep])]
 
