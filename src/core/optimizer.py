@@ -216,9 +216,10 @@ def build_time_matrix(nodes: list, headers: dict,
                 if progress_cb:
                     progress_cb(done_api, total_api)
 
-    # 혹시 None 남은 셀은 Haversine 추정치로 채움
-    for i in range(n):
-        for j in range(n):
+    # all_indices 내 None 셀만 Haversine 추정치로 채움
+    # (optimize_route는 이 범위만 참조 — 비-대표 셀 낭비 방지)
+    for i in all_indices:
+        for j in all_indices:
             if i != j and matrix[i][j] is None:
                 dist_km = _haversine_km(nodes[i]['lat'], nodes[i]['lon'],
                                          nodes[j]['lat'], nodes[j]['lon'])
@@ -234,8 +235,7 @@ def build_time_matrix(nodes: list, headers: dict,
 
 
 # ── 5단계: OR-Tools TSP + 멤버 펼침 ──────────────────────────────────────────
-def optimize_route(nodes: list, time_matrix: list,
-                   headers: dict = None, log_cb=None):
+def optimize_route(nodes: list, time_matrix: list, log_cb=None):
     """
     5단계: 전체 대표 노드를 OR-Tools TSP로 한 번에 최적 순서 계산 → 멤버 펼침.
     """

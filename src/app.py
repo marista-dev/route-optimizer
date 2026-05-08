@@ -1018,7 +1018,7 @@ class App(ctk.CTk):
             self._step("5단계 — TSP 최적 배송 순서 계산 중", 0.72)
             self._log(f"\n{'─'*36}"); self._log("  5단계   OR-Tools TSP 최적 배송 순서 계산")
             self._log("─" * 36)
-            ordered = optimize_route(nodes, matrix, headers, log_cb=self._log)
+            ordered = optimize_route(nodes, matrix, log_cb=self._log)
             if self._stopped(): self._abort(); return
             if ordered is None:
                 self._log("❌  순서 계산 실패"); self._reset_btn(); return
@@ -1084,21 +1084,14 @@ class App(ctk.CTk):
             wb.save(out_xlsx)
             self._log(f"✅  xlsx 저장: {os.path.basename(out_xlsx)}")
 
-            # ── ② CSV 저장 — XLSX 완성본에서 추출 ────────────────────────────
-            csv_cols  = ['배송순서', '이름', '택배받을 주소']
-            df_xlsx   = pd.read_excel(out_xlsx)
-            available = [c for c in csv_cols if c in df_xlsx.columns]
-
-            if '배송순서' not in available:
-                self._log("⚠️  CSV: '배송순서' 열을 찾을 수 없습니다.")
-                return out_xlsx
-
-            df_csv = df_xlsx[available].copy()
-            # to_numeric → dropna → astype(int) 순서로 안전하게 변환
-            df_csv['배송순서'] = pd.to_numeric(df_csv['배송순서'], errors='coerce')
+            # ── ② CSV 저장 — 메모리의 df + mapping 직접 사용 (디스크 재파싱 제거) ───
+            df_csv = df.copy()
+            df_csv['배송순서'] = df_csv.index.map(mapping)
             df_csv = df_csv.dropna(subset=['배송순서']).copy()
             df_csv['배송순서'] = df_csv['배송순서'].astype(int)
-            df_csv = df_csv.sort_values('배송순서').reset_index(drop=True)
+
+            keep = [c for c in ['배송순서', '이름', '택배받을 주소'] if c in df_csv.columns]
+            df_csv = df_csv[keep].sort_values('배송순서').reset_index(drop=True)
 
             out_csv = f"{base}_배송순서완성.csv"
             df_csv.to_csv(out_csv, index=False, encoding='utf-8-sig')
