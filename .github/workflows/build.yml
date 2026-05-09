@@ -34,7 +34,9 @@ jobs:
           pyinstaller `
             --onedir `
             --windowed `
+            --icon "src/icon.ico" `
             --add-data "src/core;core" `
+            --add-data "src/icon.ico;." `
             --collect-all ortools `
             --hidden-import http.server `
             --hidden-import webbrowser `

@@ -610,6 +610,14 @@ class App(ctk.CTk):
         self.resizable(False, False)
         self.configure(fg_color=_BG)
 
+        # 윈도우 아이콘 (Windows 적용, macOS는 .ico 미지원으로 조용히 스킵)
+        try:
+            icon_path = os.path.join(BASE, 'icon.ico')
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+        except Exception:
+            pass
+
         self.file_path = ""
         self.start_lat = None
         self.start_lon = None
@@ -886,6 +894,7 @@ class App(ctk.CTk):
             try:
                 xl = pd.ExcelFile(self.file_path)
                 df = None
+                read_errors = []
                 for sheet in xl.sheet_names:
                     try:
                         tmp = pd.read_excel(xl, sheet_name=sheet, header=0)
@@ -894,12 +903,19 @@ class App(ctk.CTk):
                             if sheet != xl.sheet_names[0]:
                                 self._log(f"ℹ️  '{sheet}' 시트에서 주소 열 발견")
                             break
-                    except Exception:
+                    except Exception as e:
+                        read_errors.append(f"    • '{sheet}': {type(e).__name__}: {e}")
                         continue
                 if df is None:
+                    if read_errors:
+                        self._log("ℹ️  일부 시트 읽기 실패:")
+                        for err in read_errors:
+                            self._log(err)
                     df = pd.read_excel(xl, sheet_name=xl.sheet_names[0], header=0)
             except Exception as e:
-                self._log(f"❌  파일 읽기 실패: {e}")
+                import traceback
+                self._log(f"❌  파일 읽기 실패: {type(e).__name__}: {e}")
+                self._log(f"     상세:\n{traceback.format_exc()}")
                 self._reset_btn(); return
             addr_col = next((c for c in df.columns if '택배받을 주소' in str(c)), None)
             if addr_col is None:
@@ -927,7 +943,7 @@ class App(ctk.CTk):
 
             with ThreadPoolExecutor(max_workers=_GEO_WORKERS) as executor:
                 future_to_meta = {
-                    executor.submit(geocode, addr, headers): (i, name)
+                    executor.submit(geocode, addr, headers): (i, name, addr)
                     for i, name, addr in row_meta
                 }
                 done = 0
@@ -935,23 +951,28 @@ class App(ctk.CTk):
                     if self._stopped():
                         executor.shutdown(wait=False, cancel_futures=True)
                         self._abort(); return
-                    i, name = future_to_meta[future]
+                    i, name, addr = future_to_meta[future]
                     try:
                         geo_results[i] = future.result()
-                    except Exception:
+                    except Exception as e:
                         geo_results[i] = None
+                        self._log(f"  ❌  ({i+1}/{total})  {name} — 예외: {type(e).__name__}: {e}")
                     done += 1
                     if geo_results[i]:
                         self._log(f"  ✅  ({i+1}/{total})  {name}")
-                    else:
-                        self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 위치 못 찾음")
+                    elif geo_results[i] is None and addr:
+                        # 예외 안 난 경우만 (예외는 위에서 이미 로그)
+                        self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 좌표 변환 실패 (주소: {addr[:50]})")
                     self._step("2단계 — 배송지 위치 확인 중",
                                0.15 + done / total * 0.15)
 
             df['Latitude']      = [r['lat'] if r else None for r in geo_results]
             df['Longitude']     = [r['lon'] if r else None for r in geo_results]
             df['카카오_확인주소'] = [r['kakao_road_addr'] if r else '' for r in geo_results]
-            self._log(f"\n✅  2단계 완료 — {sum(1 for r in geo_results if r)}/{total}건")
+            success_cnt = sum(1 for r in geo_results if r)
+            fail_cnt    = total - success_cnt
+            self._log(f"\n✅  2단계 완료 — 성공 {success_cnt}/{total}건"
+                      + (f"  ⚠️ 실패 {fail_cnt}건" if fail_cnt else ""))
             if self._stopped(): self._abort(); return
 
             # 3단계
@@ -983,8 +1004,9 @@ class App(ctk.CTk):
                         idx = future_to_idx[future]
                         try:
                             rev_results[idx] = future.result() or ''
-                        except Exception:
+                        except Exception as e:
                             rev_results[idx] = ''
+                            self._log(f"  ❌  역지오코딩 예외 (행 {idx+1}) — {type(e).__name__}: {e}")
                         done += 1
                         # 역지오코딩 진행률 (3단계 예산 0.13 중 0.06 할당)
                         self._step("3단계 — 역지오코딩 수집 중",
@@ -1085,8 +1107,11 @@ class App(ctk.CTk):
             self.after(0, lambda: DoneDialog(self, out, warn_cnt))
 
         except Exception as e:
-            self._log(f"\n❌  오류: {e}")
-            self.after(0, lambda: messagebox.showerror("오류", str(e)))
+            import traceback
+            tb = traceback.format_exc()
+            self._log(f"\n❌  오류: {type(e).__name__}: {e}")
+            self._log(f"     상세:\n{tb}")
+            self.after(0, lambda: messagebox.showerror("오류", f"{type(e).__name__}: {e}"))
         finally:
             self._reset_btn()
 
@@ -1145,7 +1170,9 @@ class App(ctk.CTk):
 
             return out_xlsx
         except Exception as e:
-            self._log(f"❌  저장 실패: {e}")
+            import traceback
+            self._log(f"❌  저장 실패: {type(e).__name__}: {e}")
+            self._log(f"     상세:\n{traceback.format_exc()}")
             return None
 
 

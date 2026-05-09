@@ -166,6 +166,8 @@ def build_time_matrix(nodes: list, headers: dict,
     _log(f"       대표 {len(rep_nodes)}개 + 출발지 → {total_api}쌍 호출 예정 (병렬 {_API_WORKERS}개)")
 
     done_api = 0
+    api_fail_cnt = 0       # API 5회 retry 모두 실패 (999_999 sentinel)
+    api_exception_cnt = 0  # future.result() 자체 예외
     if total_api > 0:
         with ThreadPoolExecutor(max_workers=_API_WORKERS) as executor:
             future_to_pair = {
@@ -183,9 +185,26 @@ def build_time_matrix(nodes: list, headers: dict,
 
                 i, j = future_to_pair[future]
                 try:
-                    matrix[i][j] = future.result()
-                except Exception:
-                    matrix[i][j] = 999_999
+                    result = future.result()
+                    if result == 999_999:
+                        # 5번 retry 모두 실패 → Haversine 추정 (TSP 왜곡 방지)
+                        dist_km = _haversine_km(
+                            nodes[i]['lat'], nodes[i]['lon'],
+                            nodes[j]['lat'], nodes[j]['lon'])
+                        matrix[i][j] = int(dist_km / 40.0 * 3600)
+                        api_fail_cnt += 1
+                    else:
+                        matrix[i][j] = result
+                except Exception as e:
+                    # future 자체 예외 → Haversine 추정
+                    dist_km = _haversine_km(
+                        nodes[i]['lat'], nodes[i]['lon'],
+                        nodes[j]['lat'], nodes[j]['lon'])
+                    matrix[i][j] = int(dist_km / 40.0 * 3600)
+                    api_fail_cnt += 1
+                    api_exception_cnt += 1
+                    if api_exception_cnt <= 3:
+                        _log(f"       ⚠️  쌍 ({i},{j}) 예외: {type(e).__name__}: {e}")
                 done_api += 1
 
                 if done_api % 50 == 0:
@@ -202,7 +221,14 @@ def build_time_matrix(nodes: list, headers: dict,
                                          nodes[j]['lat'], nodes[j]['lon'])
                 matrix[i][j] = int(dist_km / 40.0 * 3600)
 
-    _log(f"  ✅  도로 시간 계산 완료 — {done_api}쌍 호출")
+    _log(f"  ✅  도로 시간 계산 완료 — {done_api}쌍 (API 성공 {done_api - api_fail_cnt}, Haversine 대체 {api_fail_cnt})")
+    if api_fail_cnt > 0:
+        pct = api_fail_cnt / total_api * 100
+        _log(f"  ⚠️  API 실패 {api_fail_cnt}/{total_api}쌍 ({pct:.1f}%) → Haversine 직선거리 추정으로 대체")
+        if api_exception_cnt > 0:
+            _log(f"      └─ 예외 발생 {api_exception_cnt}건 (나머지는 5회 retry 모두 실패)")
+        if pct > 10:
+            _log(f"  ⚠️  실패율이 높습니다. 워커 수를 줄이거나 잠시 후 재시도를 권장합니다.")
 
     if progress_cb:
         progress_cb(total_api, total_api)
