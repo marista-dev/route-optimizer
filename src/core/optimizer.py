@@ -37,24 +37,65 @@ _SESSION = requests.Session()
 _API_WORKERS = 3
 
 # 카카오 모빌리티 API
+def _is_rate_limit_400(resp) -> bool:
+    """카카오 Mobility API는 rate limit 초과 시 HTTP 400 + code -10으로 응답한다.
+
+    일반 400 (좌표 오류)와 구별해서 rate limit만 retry해야 함.
+    """
+    if resp.status_code != 400:
+        return False
+    try:
+        body = resp.json()
+        # code: -10 또는 msg에 'limit' 포함되면 rate limit
+        if body.get('code') == -10:
+            return True
+        msg = str(body.get('msg', '')).lower()
+        return 'limit' in msg
+    except Exception:
+        return False
+
+
 def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
-    """두 지점 간 자동차 주행 시간(초) 반환. 실패 시 999_999."""
+    """두 지점 간 자동차 주행 시간(초) 반환. 5회 retry 후에도 실패 시 999_999.
+
+    Retry 전략 (exponential backoff):
+      - 200 OK + result_code 0:        성공 리턴
+      - 200 OK + result_code != 0:     좌표/경로 문제 → 즉시 실패 (retry 불필요)
+      - 400 + "API limit" (code -10):  rate limit → 3,6,12,24,48초 backoff
+      - 429:                           rate limit → 3,6,12,24,48초 backoff
+      - 4xx (401/403 등):             인증 오류 → 즉시 실패
+      - 5xx:                           서버 오류 → 2,4,8,16,32초 backoff
+      - timeout / Connection:          일시적 장애 → 1,2,4,8,16초 backoff
+    """
     url    = 'https://apis-navi.kakaomobility.com/v1/directions'
     params = {'origin':      f'{o_lon},{o_lat}',
               'destination': f'{d_lon},{d_lat}',
               'priority':    'RECOMMEND'}
-    for _ in range(5):
+    for attempt in range(5):
         try:
-            resp = _SESSION.get(url, headers=headers, params=params, timeout=7)
+            resp = _SESSION.get(url, headers=headers, params=params, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get('routes') and data['routes'][0]['result_code'] == 0:
                     return data['routes'][0]['summary']['duration']
-            elif resp.status_code == 429:
-                time.sleep(3)
+                # 200 + result_code != 0 → 좌표/경로 문제. retry 의미 없음.
+                return 999_999
+            elif resp.status_code == 429 or _is_rate_limit_400(resp):
+                # Rate limit: exponential backoff (3 → 6 → 12 → 24 → 48초)
+                time.sleep(3 * (2 ** attempt))
                 continue
+            elif resp.status_code >= 500:
+                # 서버 일시 장애: 짧은 backoff
+                time.sleep(2 * (2 ** attempt))
+                continue
+            elif 400 <= resp.status_code < 500:
+                # 그 외 4xx (일반 400, 401, 403 등) → retry 불필요
+                return 999_999
+        except (requests.Timeout, requests.ConnectionError):
+            # 네트워크 이슈: 약한 backoff (1 → 2 → 4 → 8 → 16초)
+            time.sleep(1 * (2 ** attempt))
         except Exception:
-            time.sleep(1)
+            time.sleep(1 * (2 ** attempt))
     return 999_999
 
 

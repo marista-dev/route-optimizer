@@ -25,6 +25,7 @@ Icon
 배송대상자 배송순서-*.xlsx
 *_배송순서완성.xlsx
 *_배송순서완성.csv
+_test/
 
 # 체크포인트
 time_matrix.json
