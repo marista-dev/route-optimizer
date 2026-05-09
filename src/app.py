@@ -1074,18 +1074,21 @@ class App(ctk.CTk):
                 self._step("4단계 — 도로 시간 수집 중",
                            0.46 + done / tot * 0.24)
 
-            matrix, groups = build_time_matrix(nodes, headers,
-                                                progress_cb=_prog,
-                                                stop_event=self._stop_evt,
-                                                log_cb=self._log)
+            matrix, primary_groups, secondary_clusters = build_time_matrix(
+                nodes, headers,
+                progress_cb=_prog,
+                stop_event=self._stop_evt,
+                log_cb=self._log)
             if self._stopped(): self._abort(); return
             self._log(f"\n✅  4단계 완료 — {len(nodes)}개 지점 도로 시간 수집 완료")
 
             # 5단계
             self._step("5단계 — TSP 최적 배송 순서 계산 중", 0.72)
-            self._log(f"\n{'─'*36}"); self._log("  5단계   OR-Tools TSP 최적 배송 순서 계산")
+            self._log(f"\n{'─'*36}"); self._log("  5단계   2단계 계층적 최적화 (TSP + NN)")
             self._log("─" * 36)
-            ordered = optimize_route(nodes, matrix, groups, log_cb=self._log)
+            ordered = optimize_route(nodes, matrix,
+                                      primary_groups, secondary_clusters,
+                                      log_cb=self._log)
             if self._stopped(): self._abort(); return
             if ordered is None:
                 self._log("❌  순서 계산 실패"); self._reset_btn(); return

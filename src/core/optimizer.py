@@ -2,20 +2,22 @@
 optimizer.py
 카카오 모빌리티 API + OR-Tools TSP 배송 순서 최적화
 
-전략 (클러스터링 없음, 단순하고 정확한 구조):
+전략 (2단계 계층적 그룹핑 + 하이브리드 최적화):
   4단계 (build_time_matrix):
-    1. 같은 건물/주소 그룹핑 → 대표 노드 추출
-    2. 대표 노드끼리 전체 N×N 카카오 API 호출
+    1. 1차 그룹핑: 같은 건물/주소 (좌표 1m 또는 동·호수 제거 동일)
+    2. 2차 그룹핑: 1차 대표 간 100m 이내를 Union-Find로 클러스터화
+    3. 2차 대표끼리만 카카오 API 호출 (호출 수 대폭 감소)
 
   5단계 (optimize_route):
-    1. 전체 대표를 OR-Tools TSP로 한 번에 최적 순서 계산
-       (출발 창고에서 시작, 총 주행시간 최소화)
-    2. 대표 순서대로 같은 건물 멤버 펼침
+    1. 2차 대표를 OR-Tools TSP로 최적 순서 계산 (정밀 도로시간 기반)
+    2. 각 클러스터 내부 1차 대표들을 NN(Haversine)으로 정렬
+       (직전 클러스터 마지막 노드에서 가장 가까운 멤버부터 연속)
+    3. 1차 그룹 멤버(같은 건물) 펼침
 
 공개 API:
   - build_time_matrix(nodes, headers, progress_cb, stop_event, log_cb)
-      → (time_matrix, location_groups)
-  - optimize_route(nodes, time_matrix, location_groups, log_cb)
+      → (time_matrix, primary_groups, secondary_clusters)
+  - optimize_route(nodes, time_matrix, primary_groups, secondary_clusters, log_cb)
       → final_order
 """
 
@@ -35,6 +37,11 @@ _SESSION = requests.Session()
 # 병렬 워커 수 — 카카오 모빌리티 API의 미공개 rate limit을 고려해 보수적으로 3개
 # (50회 burst에서 429 보고 사례 기준)
 _API_WORKERS = 3
+
+# 2차 그룹핑 임계값 (미터) — 1차 대표 간 이 거리 이내면 같은 클러스터로 묶음
+# → API 호출 수 대폭 감소 (일일 한도 10K 대응)
+# 클러스터 내부는 NN(Haversine)으로 순서 결정 → 소실 미미 (차로 1~2분)
+_SECONDARY_CLUSTER_M = 100
 
 # 카카오 모빌리티 API
 def _is_rate_limit_400(resp) -> bool:
@@ -164,15 +171,111 @@ def _build_location_groups(node_indices: list, nodes: list) -> dict:
     return groups
 
 
+# 2차 그룹핑 (Haversine 기반 클러스터화)
+def _build_secondary_clusters(primary_reps: list, nodes: list,
+                              threshold_m: float = _SECONDARY_CLUSTER_M) -> dict:
+    """
+    1차 대표 노드들을 Haversine 거리가 threshold_m 이내면 같은
+    클러스터로 묶는다 (Union-Find 알고리즘).
+
+    예: A↔B 80m, B↔C 80m, A↔C 150m → 임계값 100m이면 A,B,C 모두 같은 클러스터
+          (transitive closure: A↔B 연결, B↔C 연결 → A,B,C 한 덩어리)
+
+    Returns: {클러스터_대표: [멤버1, 멤버2, ...], ...}
+             클러스터 대표는 멤버 중 더 작은 인덱스 (결정적)
+    """
+    if not primary_reps:
+        return {}
+
+    threshold_km = threshold_m / 1000.0
+
+    # Union-Find
+    parent = {r: r for r in primary_reps}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # path compression
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            # 작은 인덱스를 root로 (결정성 확보)
+            if ra < rb:
+                parent[rb] = ra
+            else:
+                parent[ra] = rb
+
+    # 모든 쌍 비교 → 임계값 이내면 union
+    n_reps = len(primary_reps)
+    for i in range(n_reps):
+        a = primary_reps[i]
+        for j in range(i + 1, n_reps):
+            b = primary_reps[j]
+            d = _haversine_km(nodes[a]['lat'], nodes[a]['lon'],
+                              nodes[b]['lat'], nodes[b]['lon'])
+            if d <= threshold_km:
+                union(a, b)
+
+    # 클러스터 구성
+    clusters = {}
+    for r in primary_reps:
+        root = find(r)
+        clusters.setdefault(root, []).append(r)
+
+    return clusters
+
+
+def _nearest_within_cluster(members: list, prev_node_idx: int,
+                            nodes: list) -> list:
+    """
+    클러스터 멤버들을 prev_node에서 가장 가까운 순서로 정렬 (NN, Haversine).
+
+    1) prev_node → 멤버 중 가장 가까운 노드 선택 → first
+    2) first → 다음 가장 가까운 → second
+    3) ... 모든 멤버 소진 때까지
+
+    Returns: 정렬된 멤버 인덱스 리스트
+    """
+    if not members:
+        return []
+    if len(members) == 1:
+        return list(members)
+
+    remaining = list(members)
+    ordered = []
+    current = prev_node_idx
+
+    while remaining:
+        best_idx = 0
+        best_d = float('inf')
+        for i, m in enumerate(remaining):
+            d = _haversine_km(
+                nodes[current]['lat'], nodes[current]['lon'],
+                nodes[m]['lat'], nodes[m]['lon'])
+            if d < best_d:
+                best_d = d
+                best_idx = i
+        next_node = remaining.pop(best_idx)
+        ordered.append(next_node)
+        current = next_node
+
+    return ordered
+
+
 # 4단계: 그룹핑 + 전체 N×N API 호출
 def build_time_matrix(nodes: list, headers: dict,
                       progress_cb=None,
                       stop_event: threading.Event = None,
                       log_cb=None) -> tuple:
     """
-    4단계: 그룹핑 → 대표 노드끼리 전체 N×N 카카오 API 호출.
+    4단계: 1차 그룹핑 → 2차 클러스터화 → 2차 대표끼리 카카오 API 호출.
 
-    Returns: (time_matrix, location_groups)
+    Returns: (time_matrix, primary_groups, secondary_clusters)
+      - time_matrix: 전체 N×N 중 "출발지 + 2차 대표" 셔만 채워짐
+      - primary_groups: {1차_대표: [멤버원본1, ...]}
+      - secondary_clusters: {클러스터_대표: [1차_대표1, 1차_대표2, ...]}
     """
     def _log(msg):
         if log_cb:
@@ -180,31 +283,47 @@ def build_time_matrix(nodes: list, headers: dict,
 
     n = len(nodes)
     if n <= 1:
-        return [[0]], {}
+        return [[0]], {}, {}
 
     # 빈 행렬 초기화 (대각선 = 0)
     matrix = [[0 if i == j else None for j in range(n)] for i in range(n)]
 
-    # 4-1) 같은 건물 그룹핑 → 대표 노드 추출
-    _log("  4-1)  같은 건물/주소 그룹핑 중...")
-    location_groups = _build_location_groups(list(range(1, n)), nodes)
-    rep_nodes = list(location_groups.keys())
-    grouped_cnt = sum(1 for g in location_groups.values() if len(g) > 1)
-    _log(f"  ✅  전체 {n - 1}건 → 대표 {len(rep_nodes)}개 추출"
-         f" (같은 건물 그룹 {grouped_cnt}개)")
+    # 4-1) 1차 그룹핑: 같은 건물/주소
+    _log("  4-1)  1차 그룹핑 (같은 건물/주소) 중...")
+    primary_groups = _build_location_groups(list(range(1, n)), nodes)
+    primary_reps = list(primary_groups.keys())
+    p_grouped_cnt = sum(1 for g in primary_groups.values() if len(g) > 1)
+    _log(f"  ✅  전체 {n - 1}건 → 1차 대표 {len(primary_reps)}개"
+         f" (같은 건물 그룹 {p_grouped_cnt}개)")
 
     if stop_event and stop_event.is_set():
-        return matrix, location_groups
+        return matrix, primary_groups, {}
 
-    # 4-2) 대표 노드끼리 전체 N×N 카카오 API 호출
-    # 출발지(0) ↔ 대표 + 대표 ↔ 대표 전체 쌍
-    all_indices = [0] + rep_nodes  # 출발지 + 모든 대표
+    # 4-2) 2차 그룹핑: 1차 대표 간 100m 이내 클러스터화
+    _log(f"\n  4-2)  2차 그룹핑 (Haversine {_SECONDARY_CLUSTER_M}m) 중...")
+    secondary_clusters = _build_secondary_clusters(
+        primary_reps, nodes, _SECONDARY_CLUSTER_M)
+    cluster_reps = list(secondary_clusters.keys())
+    s_grouped_cnt = sum(1 for g in secondary_clusters.values() if len(g) > 1)
+    avg_size = sum(len(g) for g in secondary_clusters.values()) / max(1, len(cluster_reps))
+    _log(f"  ✅  1차 대표 {len(primary_reps)}개 → 2차 클러스터 {len(cluster_reps)}개"
+         f" (병합 {s_grouped_cnt}개, 평균 멤버 {avg_size:.1f}개)")
+
+    if stop_event and stop_event.is_set():
+        return matrix, primary_groups, secondary_clusters
+
+    # 4-3) 2차 대표끼리만 카카오 API 호출 (호출 수 대폭 감소)
+    all_indices = [0] + cluster_reps  # 출발지 + 2차 대표
     pairs_todo = [(i, j) for i in all_indices for j in all_indices
                   if i != j and matrix[i][j] is None]
 
     total_api = len(pairs_todo)
-    _log(f"\n  4-2)  대표 노드 간 도로 시간 계산 중 (카카오 API)...")
-    _log(f"       대표 {len(rep_nodes)}개 + 출발지 → {total_api}쌍 호출 예정 (병렬 {_API_WORKERS}개)")
+    _log(f"\n  4-3)  2차 대표 간 도로 시간 계산 중 (카카오 API)...")
+    _log(f"       2차 대표 {len(cluster_reps)}개 + 출발지 → {total_api}쌍 호출 예정 (병렬 {_API_WORKERS}개)")
+    if total_api <= 10000:
+        _log(f"       → 일일 한도(10K) 대비 {total_api/100:.1f}% 사용 예상")
+    else:
+        _log(f"       ⚠️  일일 한도(10K) 초과 예상 ({total_api - 10000}건 초과) — 임계값 높이거나 데이터 분할 권장")
 
     done_api = 0
     api_fail_cnt = 0       # API 5회 retry 모두 실패 (999_999 sentinel)
@@ -222,7 +341,7 @@ def build_time_matrix(nodes: list, headers: dict,
             for future in as_completed(future_to_pair):
                 if stop_event and stop_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
-                    return matrix, location_groups
+                    return matrix, primary_groups, secondary_clusters
 
                 i, j = future_to_pair[future]
                 try:
@@ -274,14 +393,15 @@ def build_time_matrix(nodes: list, headers: dict,
     if progress_cb:
         progress_cb(total_api, total_api)
 
-    return matrix, location_groups
+    return matrix, primary_groups, secondary_clusters
 
 
-# 5단계: OR-Tools TSP + 멤버 펼침
+# 5단계: TSP(클러스터) + NN(클러스터 내부) + 멤버 펼침
 def optimize_route(nodes: list, time_matrix: list,
-                   location_groups: dict, log_cb=None):
+                   primary_groups: dict, secondary_clusters: dict,
+                   log_cb=None):
     """
-    5단계: 전체 대표 노드를 OR-Tools TSP로 한 번에 최적 순서 계산 → 멤버 펼침.
+    5단계: 2차 대표 TSP → 클러스터 내부 NN → 1차 멤버 펼침.
     """
     def _log(msg):
         if log_cb:
@@ -293,17 +413,17 @@ def optimize_route(nodes: list, time_matrix: list,
     if n == 2:
         return [1]
 
-    rep_nodes = list(location_groups.keys())
-    num = len(rep_nodes)
+    cluster_reps = list(secondary_clusters.keys())
+    num = len(cluster_reps)
 
-    # 5-1) 전체 대표를 OR-Tools TSP로 최적 순서 계산
-    _log("  5-1)  OR-Tools TSP 최적 순서 계산 중...")
-    _log(f"       대표 {num}개를 한 번에 최적화")
+    # 5-1) 2차 대표를 OR-Tools TSP로 최적 순서 계산 (정밀 도로시간)
+    _log("  5-1)  OR-Tools TSP 최적 순서 계산 중 (2차 대표 기준)...")
+    _log(f"       2차 대표 {num}개를 한 번에 최적화")
 
     if num <= 2:
-        rep_order = list(rep_nodes)
+        cluster_order = list(cluster_reps)
     else:
-        local_nodes = [0] + rep_nodes  # 출발지 + 대표들
+        local_nodes = [0] + cluster_reps  # 출발지 + 2차 대표
         local_n = len(local_nodes)
 
         # 로컬 시간 행렬
@@ -343,7 +463,7 @@ def optimize_route(nodes: list, time_matrix: list,
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
         params.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-        # 대표 100개 수준 → 60초면 충분
+        # 2차 대표 수가 적으므로 시간 제한 더 타이트하게
         params.time_limit.seconds = min(120, max(30, num * 2))
 
         _log(f"       TSP 제한 시간: {params.time_limit.seconds}초")
@@ -351,23 +471,40 @@ def optimize_route(nodes: list, time_matrix: list,
         sol = routing.SolveWithParameters(params)
 
         if sol:
-            rep_order = []
+            cluster_order = []
             idx = routing.Start(0)
             while not routing.IsEnd(idx):
                 node = manager.IndexToNode(idx)
                 if node != 0 and node != dummy and node < local_n:
-                    rep_order.append(local_nodes[node])
+                    cluster_order.append(local_nodes[node])
                 idx = sol.Value(routing.NextVar(idx))
-            _log(f"  ✅  TSP 최적화 완료 — {len(rep_order)}개 대표 순서 확정")
+            _log(f"  ✅  TSP 완료 — 2차 클러스터 {len(cluster_order)}개 순서 확정")
         else:
-            # fallback: Nearest Neighbor
+            # fallback: Nearest Neighbor (시간 행렬 기준)
             _log("  ⚠️  TSP 실패 → Nearest Neighbor fallback")
-            rep_order = _nearest_neighbor_chain(rep_nodes, nodes, time_matrix)
-            _log(f"  ✅  Nearest Neighbor 완료 — {len(rep_order)}개 순서 확정")
+            cluster_order = _nearest_neighbor_chain(cluster_reps, nodes, time_matrix)
+            _log(f"  ✅  Nearest Neighbor 완료 — {len(cluster_order)}개 순서")
 
-    # 5-2) 대표 순서대로 같은 건물 멤버 펼침
-    _log(f"\n  5-2)  같은 건물 멤버 연속 배치 중...")
-    final_order = [m for rep in rep_order for m in location_groups.get(rep, [rep])]
+    # 5-2) 클러스터 내부 NN — 직전 클러스터 마지막 노드에서 가까운 멤버부터 연속
+    _log(f"\n  5-2)  클러스터 내부 NN(Haversine) 정렬 중...")
+    primary_order = []
+    prev_node = 0  # 출발지에서 시작
+    multi_clusters = 0
+    for cluster_rep in cluster_order:
+        members = secondary_clusters.get(cluster_rep, [cluster_rep])
+        if len(members) > 1:
+            multi_clusters += 1
+        sorted_members = _nearest_within_cluster(members, prev_node, nodes)
+        primary_order.extend(sorted_members)
+        if sorted_members:
+            prev_node = sorted_members[-1]  # 다음 클러스터 진입점 결정용
+    _log(f"  ✅  1차 대표 {len(primary_order)}개 순서 확정"
+         f" (다중 멤버 클러스터 {multi_clusters}개에 NN 적용)")
+
+    # 5-3) 1차 그룹 멤버(같은 건물) 펼침
+    _log(f"\n  5-3)  같은 건물 멤버 연속 배치 중...")
+    final_order = [m for rep in primary_order
+                     for m in primary_groups.get(rep, [rep])]
 
     _log(f"  ✅  최종 {len(final_order)}건 순서 확정")
 
