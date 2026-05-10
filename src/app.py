@@ -27,7 +27,7 @@ BASE = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from core.geocoder  import geocode, reverse_geocode, verify_address
-from core.optimizer import build_time_matrix, optimize_route
+from core.optimizer import build_time_matrix, optimize_route, RateLimitExceededError
 
 # ── 디자인 토큰 ───────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
@@ -1109,6 +1109,17 @@ class App(ctk.CTk):
             self._log(f"    위치:   {os.path.dirname(out)}")
             self.after(0, lambda: DoneDialog(self, out, warn_cnt))
 
+        except RateLimitExceededError as e:
+            # API 일일 한도 초과 → 알림창 + 자동 초기화
+            self._log("")
+            self._log("═" * 36)
+            self._log("🚨  API 일일 한도 초과로 작업 중단")
+            self._log("═" * 36)
+            self._step("API 한도 초과 — 작업 중단", 0, _DANGER)
+            self.after(0, self._show_rate_limit_dialog, e)
+            # _refresh는 알림 닫은 후 _show_rate_limit_dialog에서 호출
+            return  # finally에서 _reset_btn만 호출되도록
+
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
@@ -1117,6 +1128,26 @@ class App(ctk.CTk):
             self.after(0, lambda: messagebox.showerror("오류", f"{type(e).__name__}: {e}"))
         finally:
             self._reset_btn()
+
+    def _show_rate_limit_dialog(self, error):
+        """API 일일 한도 초과 알림 — 확인 누르면 자동 초기화."""
+        progress_str = ""
+        if error.progress:
+            done, total = error.progress
+            progress_str = f"\n\n진행: {done}/{total}쌍 (작업 폐기됨)"
+
+        msg = (
+            "카카오 모빌리티 API의 일일 호출 한도(10,000건)가 "
+            "초과되었습니다.\n\n"
+            "다음 중 하나를 시도해주세요:\n"
+            "  • 새 API 키로 교체 후 재실행\n"
+            "  • 자정 이후 다시 실행\n"
+            f"  • 동일한 API 키는 자정 KST에 한도가 초기화됩니다"
+            + progress_str
+        )
+        messagebox.showwarning("API 한도 초과", msg)
+        # 알림 확인 후 자동 초기화
+        self._refresh()
 
     def _save_xlsx(self, mapping: dict, df: pd.DataFrame):
         try:

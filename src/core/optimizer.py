@@ -40,8 +40,29 @@ _API_WORKERS = 3
 
 # 2차 그룹핑 임계값 (미터) — 1차 대표 간 이 거리 이내면 같은 클러스터로 묶음
 # → API 호출 수 대폭 감소 (일일 한도 10K 대응)
-# 클러스터 내부는 NN(Haversine)으로 순서 결정 → 소실 미미 (차로 1~2분)
-_SECONDARY_CLUSTER_M = 100
+# 클러스터 내부는 NN(Haversine)으로 순서 결정 → 소실 미미 (도보 2~3분, 택배기사 재주차 시간과 비슷)
+_SECONDARY_CLUSTER_M = 200
+
+# Rate limit 중단 임계값 — 일일 한도 초과 감지 시 즉시 중단 + 알림
+# 일시적 burst와 구분하기 위해 연속/누적 둘 다 체크
+_RATE_LIMIT_CONSEC_LIMIT = 5  # 연속 이 회수 rate-limit → 중단
+_RATE_LIMIT_TOTAL_LIMIT  = 10  # 누적 이 회수 rate-limit → 중단
+
+
+class RateLimitExceededError(Exception):
+    """카카오 API 일일 한도 초과 감지 시 발생. app.py가 알림 창을 띄우고 작업 중단.
+
+    Attributes:
+        consecutive: 연속 감지 횟수
+        total: 누적 감지 횟수
+        progress: 중단 시점의 진행률 (done / total)
+    """
+    def __init__(self, consecutive: int, total: int, progress: tuple = None):
+        self.consecutive = consecutive
+        self.total = total
+        self.progress = progress
+        msg = f"API 일일 한도 초과 (연속 {consecutive}건, 누적 {total}건)"
+        super().__init__(msg)
 
 # 카카오 모빌리티 API
 def _is_rate_limit_400(resp) -> bool:
@@ -63,14 +84,19 @@ def _is_rate_limit_400(resp) -> bool:
 
 
 def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
-    """두 지점 간 자동차 주행 시간(초) 반환. 5회 retry 후에도 실패 시 999_999.
+    """두 지점 간 자동차 주행 시간(초) 반환.
+
+    반환값:
+      - 정상: 주행 시간 (조)
+      - 일반 실패 (timeout/5xx/좌표오류 등): 999_999 → Haversine 대체
+      - **rate-limit 실패 (5회 retry 후 일일 한도 계속 감지): -1** → 카운터 증가
 
     Retry 전략 (exponential backoff):
       - 200 OK + result_code 0:        성공 리턴
-      - 200 OK + result_code != 0:     좌표/경로 문제 → 즉시 실패 (retry 불필요)
-      - 400 + "API limit" (code -10):  rate limit → 3,6,12,24,48초 backoff
-      - 429:                           rate limit → 3,6,12,24,48초 backoff
-      - 4xx (401/403 등):             인증 오류 → 즉시 실패
+      - 200 OK + result_code != 0:     좌표/경로 문제 → 999_999
+      - 400 + "API limit" (code -10):  rate limit → 3,6,12,24,48초 backoff → 계속 실패시 -1
+      - 429:                           rate limit → 3,6,12,24,48초 backoff → 계속 실패시 -1
+      - 4xx (401/403 등):             인증 오류 → 999_999
       - 5xx:                           서버 오류 → 2,4,8,16,32초 backoff
       - timeout / Connection:          일시적 장애 → 1,2,4,8,16초 backoff
     """
@@ -78,6 +104,8 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
     params = {'origin':      f'{o_lon},{o_lat}',
               'destination': f'{d_lon},{d_lat}',
               'priority':    'RECOMMEND'}
+    last_was_rate_limit = False  # 5회 retry 중 마지막 단계가 rate-limit이었는지
+
     for attempt in range(5):
         try:
             resp = _SESSION.get(url, headers=headers, params=params, timeout=10)
@@ -89,10 +117,12 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
                 return 999_999
             elif resp.status_code == 429 or _is_rate_limit_400(resp):
                 # Rate limit: exponential backoff (3 → 6 → 12 → 24 → 48초)
+                last_was_rate_limit = True
                 time.sleep(3 * (2 ** attempt))
                 continue
             elif resp.status_code >= 500:
                 # 서버 일시 장애: 짧은 backoff
+                last_was_rate_limit = False
                 time.sleep(2 * (2 ** attempt))
                 continue
             elif 400 <= resp.status_code < 500:
@@ -100,10 +130,14 @@ def _get_driving_time(o_lon, o_lat, d_lon, d_lat, headers: dict) -> int:
                 return 999_999
         except (requests.Timeout, requests.ConnectionError):
             # 네트워크 이슈: 약한 backoff (1 → 2 → 4 → 8 → 16초)
+            last_was_rate_limit = False
             time.sleep(1 * (2 ** attempt))
         except Exception:
+            last_was_rate_limit = False
             time.sleep(1 * (2 ** attempt))
-    return 999_999
+
+    # 5회 retry 모두 실패 → 마지막 원인으로 구분
+    return -1 if last_was_rate_limit else 999_999
 
 
 # 거리 유틸
@@ -326,8 +360,11 @@ def build_time_matrix(nodes: list, headers: dict,
         _log(f"       ⚠️  일일 한도(10K) 초과 예상 ({total_api - 10000}건 초과) — 임계값 높이거나 데이터 분할 권장")
 
     done_api = 0
-    api_fail_cnt = 0       # API 5회 retry 모두 실패 (999_999 sentinel)
-    api_exception_cnt = 0  # future.result() 자체 예외
+    api_fail_cnt = 0          # API 실패 총 (Haversine 대체로 이어지는 건)
+    api_exception_cnt = 0     # future.result() 자체 예외
+    rate_limit_total = 0      # 누적 rate-limit 감지 수
+    rate_limit_consec = 0     # 연속 rate-limit 감지 수
+
     if total_api > 0:
         with ThreadPoolExecutor(max_workers=_API_WORKERS) as executor:
             future_to_pair = {
@@ -346,17 +383,44 @@ def build_time_matrix(nodes: list, headers: dict,
                 i, j = future_to_pair[future]
                 try:
                     result = future.result()
-                    if result == 999_999:
-                        # 5번 retry 모두 실패 → Haversine 추정 (TSP 왜곡 방지)
+                    if result == -1:
+                        # Rate-limit 실패 — 일일 한도 초과 의심 신호
+                        rate_limit_total += 1
+                        rate_limit_consec += 1
+                        # 임계값 도달 시 즉시 중단 → RateLimitExceededError
+                        if (rate_limit_consec >= _RATE_LIMIT_CONSEC_LIMIT or
+                            rate_limit_total >= _RATE_LIMIT_TOTAL_LIMIT):
+                            _log(f"")
+                            _log(f"  🚨  일일 한도 초과 감지 — 작업 중단")
+                            _log(f"      연속 {rate_limit_consec}건, 누적 {rate_limit_total}건 rate-limit 발생")
+                            _log(f"      → 새 API 키로 교체하거나 자정 이후 재시도해주세요")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            raise RateLimitExceededError(
+                                rate_limit_consec, rate_limit_total,
+                                progress=(done_api, total_api))
+                        # 임계값 아직 아님 → Haversine 대체하고 진행
+                        dist_km = _haversine_km(
+                            nodes[i]['lat'], nodes[i]['lon'],
+                            nodes[j]['lat'], nodes[j]['lon'])
+                        matrix[i][j] = int(dist_km / 40.0 * 3600)
+                        api_fail_cnt += 1
+                    elif result == 999_999:
+                        # 일반 실패 (timeout/5xx/좌표오류) → Haversine 대체
+                        rate_limit_consec = 0  # 연속 카운터 리셋
                         dist_km = _haversine_km(
                             nodes[i]['lat'], nodes[i]['lon'],
                             nodes[j]['lat'], nodes[j]['lon'])
                         matrix[i][j] = int(dist_km / 40.0 * 3600)
                         api_fail_cnt += 1
                     else:
+                        # 정상 응답
+                        rate_limit_consec = 0  # 연속 카운터 리셋
                         matrix[i][j] = result
+                except RateLimitExceededError:
+                    raise  # 상위로 전파
                 except Exception as e:
                     # future 자체 예외 → Haversine 추정
+                    rate_limit_consec = 0
                     dist_km = _haversine_km(
                         nodes[i]['lat'], nodes[i]['lon'],
                         nodes[j]['lat'], nodes[j]['lon'])
