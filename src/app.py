@@ -1165,7 +1165,8 @@ class App(ctk.CTk):
                 ws = wb[self.sheet_name]
             else:
                 ws = wb.active
-                self._log(f"  ⚠️  '{self.sheet_name}' 시트를 찾지 못해 활성 시트에 저장합니다")
+                self._log(f"  ⚠️  읽은 시트를 특정하지 못해 활성 시트"
+                          f"('{ws.title}')에 저장합니다")
             self._log(f"  대상 시트: '{ws.title}'")
             hrow = [c.value for c in ws[1]]
 

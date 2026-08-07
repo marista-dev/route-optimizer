@@ -28,14 +28,34 @@ _DONG_NUM_RE = re.compile(r'(?<![가-힣0-9])제?\s*(\d+)\s*동(?![가-힣])')
 # 건물 동(영문) — 'A동', 'C동'
 _DONG_ALPHA_RE = re.compile(r'(?<![가-힣A-Za-z0-9])([A-Za-z])\s*동(?![가-힣])')
 
-# 호수 — '1402호', '403호'. '호반리젠시빌'처럼 숫자 없는 '호'는 매칭되지 않는다.
-_HO_RE = re.compile(r'(\d+)\s*호(?![가-힣])')
+# 호수 — '1402호', '제1504호'. '호반리젠시빌'처럼 숫자 없는 '호'는 매칭되지 않는다.
+_HO_RE = re.compile(r'(?<![가-힣0-9])제?\s*(\d+)\s*호(?![가-힣])')
 
 # 층 — '3층', '2 층'
 _FLOOR_RE = re.compile(r'제?\s*\d+\s*층')
 
 # 구분자 (정규화 키에서 통째로 제거)
 _SEP_RE = re.compile(r'[\s,]+')
+
+# ── 제거용 패턴 ──────────────────────────────────────────────────────────────
+# 위 패턴은 '찾기'용이라 동 뒤 숫자를 남긴다(parse_unit의 호수 폴백이 그 숫자를
+# 봐야 하므로). 키 정규화·질의 생성에서는 동과 호수를 한 덩어리로 지워야
+# '106동 1504호'와 '112동 1205'(호 접미사 없음)가 같은 규칙으로 정리된다.
+#   '101동 15번지'처럼 뒤 숫자가 호수가 아닌 경우는 (?![가-힣0-9])가 걸러낸다.
+_UNIT_SUFFIX = r'(?:\s*제?\s*\d+\s*호?(?![가-힣0-9]))?'
+_DONG_NUM_BLOCK_RE = re.compile(
+    r'(?<![가-힣0-9])제?\s*\d+\s*동(?![가-힣])' + _UNIT_SUFFIX)
+_DONG_ALPHA_BLOCK_RE = re.compile(
+    r'(?<![가-힣A-Za-z0-9])[A-Za-z]\s*동(?![가-힣])' + _UNIT_SUFFIX)
+
+
+def _remove_units(s: str) -> str:
+    """동 + 호수 + 층을 제거한다 (키 정규화·지오코딩 질의 공용)."""
+    s = _DONG_NUM_BLOCK_RE.sub(' ', s)
+    s = _DONG_ALPHA_BLOCK_RE.sub(' ', s)
+    s = _HO_RE.sub(' ', s)
+    s = _FLOOR_RE.sub(' ', s)
+    return s
 
 
 def parse_unit(address: str) -> tuple:
@@ -75,9 +95,9 @@ def parse_unit(address: str) -> tuple:
         return dong_num, dong_txt, int(mh.group(1))
 
     # '호' 접미사 없이 숫자만 적힌 표기 — '112동 1205'
-    # 번지형('20-1')은 호수가 아니므로 제외
+    # 번지형('20-1')이나 '15번지'처럼 뒤에 다른 말이 붙으면 호수가 아니다
     if m:
-        mn = re.match(r'\s*(\d+)(?![\d\-])', rest)
+        mn = re.match(r'\s*(\d+)(?![\d\-가-힣])', rest)
         if mn:
             return dong_num, dong_txt, int(mn.group(1))
 
@@ -98,11 +118,7 @@ def complex_key(address: str) -> str:
     """
     if not address:
         return ''
-    s = _PAREN_RE.sub(' ', address)
-    s = _DONG_NUM_RE.sub(' ', s)
-    s = _DONG_ALPHA_RE.sub(' ', s)
-    s = _HO_RE.sub(' ', s)
-    s = _FLOOR_RE.sub(' ', s)
+    s = _remove_units(_PAREN_RE.sub(' ', address))
     s = _SEP_RE.sub('', s)
     return s.lower()
 
@@ -115,10 +131,7 @@ def strip_unit(address: str) -> str:
     """
     if not address:
         return ''
-    s = _DONG_NUM_RE.sub(' ', address)
-    s = _DONG_ALPHA_RE.sub(' ', s)
-    s = _HO_RE.sub(' ', s)
-    s = _FLOOR_RE.sub(' ', s)
+    s = _remove_units(address)
     s = re.sub(r'\s+', ' ', s)
     return s.strip().rstrip(',').strip()
 
