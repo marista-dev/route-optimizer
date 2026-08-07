@@ -618,10 +618,11 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-        self.file_path = ""
-        self.start_lat = None
-        self.start_lon = None
-        self._stop_evt = threading.Event()
+        self.file_path  = ""
+        self.sheet_name = None   # 주소 열을 찾은 시트 — 저장 시 같은 시트에 써야 함
+        self.start_lat  = None
+        self.start_lon  = None
+        self._stop_evt  = threading.Event()
 
         self._build_ui()
 
@@ -894,12 +895,14 @@ class App(ctk.CTk):
             try:
                 xl = pd.ExcelFile(self.file_path)
                 df = None
+                self.sheet_name = None
                 read_errors = []
                 for sheet in xl.sheet_names:
                     try:
                         tmp = pd.read_excel(xl, sheet_name=sheet, header=0)
                         if any('택배받을 주소' in str(c) for c in tmp.columns):
                             df = tmp
+                            self.sheet_name = sheet
                             if sheet != xl.sheet_names[0]:
                                 self._log(f"ℹ️  '{sheet}' 시트에서 주소 열 발견")
                             break
@@ -911,7 +914,8 @@ class App(ctk.CTk):
                         self._log("ℹ️  일부 시트 읽기 실패:")
                         for err in read_errors:
                             self._log(err)
-                    df = pd.read_excel(xl, sheet_name=xl.sheet_names[0], header=0)
+                    self.sheet_name = xl.sheet_names[0]
+                    df = pd.read_excel(xl, sheet_name=self.sheet_name, header=0)
             except Exception as e:
                 import traceback
                 self._log(f"❌  파일 읽기 실패: {type(e).__name__}: {e}")
@@ -1154,8 +1158,15 @@ class App(ctk.CTk):
             base = os.path.splitext(self.file_path)[0]
 
             # ── ① xlsx 저장 ───────────────────────────────────────────────────
-            wb   = load_workbook(self.file_path)
-            ws   = wb.active
+            wb = load_workbook(self.file_path)
+            # 읽을 때 주소 열을 찾은 시트에 그대로 써야 한다.
+            # wb.active(엑셀에서 마지막으로 선택된 탭)를 쓰면 다른 시트에 기록될 수 있다.
+            if self.sheet_name and self.sheet_name in wb.sheetnames:
+                ws = wb[self.sheet_name]
+            else:
+                ws = wb.active
+                self._log(f"  ⚠️  '{self.sheet_name}' 시트를 찾지 못해 활성 시트에 저장합니다")
+            self._log(f"  대상 시트: '{ws.title}'")
             hrow = [c.value for c in ws[1]]
 
             if '배송순서' in hrow:

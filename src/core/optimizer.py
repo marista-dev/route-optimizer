@@ -5,14 +5,15 @@ optimizer.py
 전략 (2단계 계층적 그룹핑 + 하이브리드 최적화):
   4단계 (build_time_matrix):
     1. 1차 그룹핑: 같은 건물/주소 (좌표 1m 또는 동·호수 제거 동일)
-    2. 2차 그룹핑: 1차 대표 간 100m 이내를 Union-Find로 클러스터화
+    2. 2차 그룹핑: 1차 대표 간 _SECONDARY_CLUSTER_M 이내를 Union-Find로 클러스터화
     3. 2차 대표끼리만 카카오 API 호출 (호출 수 대폭 감소)
 
   5단계 (optimize_route):
     1. 2차 대표를 OR-Tools TSP로 최적 순서 계산 (정밀 도로시간 기반)
-    2. 각 클러스터 내부 1차 대표들을 NN(Haversine)으로 정렬
-       (직전 클러스터 마지막 노드에서 가장 가까운 멤버부터 연속)
-    3. 1차 그룹 멤버(같은 건물) 펼침
+    2. 각 클러스터 내부는 같은 단지끼리 덩어리로 묶은 뒤 NN(Haversine)으로 정렬
+       (직전 클러스터 마지막 노드에서 가장 가까운 덩어리부터 연속)
+    3. 1차 그룹 멤버(같은 건물) 펼침 — 동 → 호 오름차순
+       (예: 202동 406호 → 206동 311호 → 207동 403호)
 
 공개 API:
   - build_time_matrix(nodes, headers, progress_cb, stop_event, log_cb)
@@ -22,7 +23,6 @@ optimizer.py
 """
 
 import math
-import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,6 +30,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
+
+from core.address import complex_key, unit_sort_key
 
 # HTTP keep-alive 세션 (병렬 스레드 안전)
 _SESSION = requests.Session()
@@ -153,11 +155,9 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
 
 
 # 같은 위치 그룹핑
-def _strip_unit(address: str) -> str:
-    """동/호/층 번호를 제거한 기본 주소 반환 (같은 건물 단위 비교용)."""
-    s = re.sub(r'\d+동\s*\d+호|\d+층.*|\d+호', '', address)
-    s = re.sub(r'\s+', ' ', s).strip().lower()
-    return s
+def _unit_key(node_idx: int, nodes: list) -> tuple:
+    """노드의 동 → 호 오름차순 정렬 키 (core.address.unit_sort_key 래퍼)."""
+    return unit_sort_key(nodes[node_idx].get('address', ''), node_idx)
 
 
 def _build_location_groups(node_indices: list, nodes: list) -> dict:
@@ -175,8 +175,7 @@ def _build_location_groups(node_indices: list, nodes: list) -> dict:
         return (round(n['lat'], 5), round(n['lon'], 5))
 
     def _addr_key(ni):
-        addr = nodes[ni].get('address', '')
-        return _strip_unit(addr) if addr else ''
+        return complex_key(nodes[ni].get('address', ''))
 
     coord_groups = {}
     addr_groups  = {}
@@ -213,7 +212,7 @@ def _build_secondary_clusters(primary_reps: list, nodes: list,
     클러스터로 묶는다 (Union-Find 알고리즘).
 
     예: A↔B 80m, B↔C 80m, A↔C 150m → 임계값 100m이면 A,B,C 모두 같은 클러스터
-          (transitive closure: A↔B 연결, B↔C 연결 → A,B,C 한 덩어리)
+        (transitive closure: A↔B 연결, B↔C 연결 → A,B,C 한 덩어리)
 
     Returns: {클러스터_대표: [멤버1, 멤버2, ...], ...}
              클러스터 대표는 멤버 중 더 작은 인덱스 (결정적)
@@ -266,9 +265,13 @@ def _nearest_within_cluster(members: list, prev_node_idx: int,
     """
     클러스터 멤버들을 prev_node에서 가장 가까운 순서로 정렬 (NN, Haversine).
 
-    1) prev_node → 멤버 중 가장 가까운 노드 선택 → first
-    2) first → 다음 가장 가까운 → second
-    3) ... 모든 멤버 소진 때까지
+    같은 단지(complex_key 동일)인 멤버는 하나의 덩어리로 묶어 통째로 이동하고,
+    덩어리 안에서는 동 → 호 오름차순으로 세운다.
+    → 201동과 202동이 서로 다른 1차 대표로 잡혀도 흩어지지 않는다.
+
+    1) prev_node → 덩어리 중 가장 가까운 것 선택 (첫 멤버 좌표 기준)
+    2) 그 덩어리의 마지막 멤버 → 다음 가장 가까운 덩어리
+    3) ... 모든 덩어리 소진 때까지
 
     Returns: 정렬된 멤버 인덱스 리스트
     """
@@ -277,23 +280,31 @@ def _nearest_within_cluster(members: list, prev_node_idx: int,
     if len(members) == 1:
         return list(members)
 
-    remaining = list(members)
+    # 같은 단지끼리 덩어리로 (주소가 없으면 단독 취급)
+    blocks = {}
+    for m in members:
+        key = complex_key(nodes[m].get('address', '')) or f'#{m}'
+        blocks.setdefault(key, []).append(m)
+    for blk in blocks.values():
+        blk.sort(key=lambda m: _unit_key(m, nodes))
+
+    remaining = list(blocks.values())
     ordered = []
     current = prev_node_idx
 
     while remaining:
         best_idx = 0
         best_d = float('inf')
-        for i, m in enumerate(remaining):
+        for i, blk in enumerate(remaining):
             d = _haversine_km(
                 nodes[current]['lat'], nodes[current]['lon'],
-                nodes[m]['lat'], nodes[m]['lon'])
+                nodes[blk[0]]['lat'], nodes[blk[0]]['lon'])
             if d < best_d:
                 best_d = d
                 best_idx = i
-        next_node = remaining.pop(best_idx)
-        ordered.append(next_node)
-        current = next_node
+        blk = remaining.pop(best_idx)
+        ordered.extend(blk)
+        current = blk[-1]
 
     return ordered
 
@@ -333,7 +344,7 @@ def build_time_matrix(nodes: list, headers: dict,
     if stop_event and stop_event.is_set():
         return matrix, primary_groups, {}
 
-    # 4-2) 2차 그룹핑: 1차 대표 간 100m 이내 클러스터화
+    # 4-2) 2차 그룹핑: 1차 대표 간 _SECONDARY_CLUSTER_M 이내 클러스터화
     _log(f"\n  4-2)  2차 그룹핑 (Haversine {_SECONDARY_CLUSTER_M}m) 중...")
     secondary_clusters = _build_secondary_clusters(
         primary_reps, nodes, _SECONDARY_CLUSTER_M)
@@ -565,10 +576,17 @@ def optimize_route(nodes: list, time_matrix: list,
     _log(f"  ✅  1차 대표 {len(primary_order)}개 순서 확정"
          f" (다중 멤버 클러스터 {multi_clusters}개에 NN 적용)")
 
-    # 5-3) 1차 그룹 멤버(같은 건물) 펼침
-    _log(f"\n  5-3)  같은 건물 멤버 연속 배치 중...")
-    final_order = [m for rep in primary_order
-                     for m in primary_groups.get(rep, [rep])]
+    # 5-3) 1차 그룹 멤버(같은 건물/단지) 펼침 — 동 → 호 오름차순
+    _log(f"\n  5-3)  같은 단지 멤버 동·호 순 배치 중...")
+    final_order = []
+    sorted_groups = 0
+    for rep in primary_order:
+        members = primary_groups.get(rep, [rep])
+        if len(members) > 1:
+            members = sorted(members, key=lambda m: _unit_key(m, nodes))
+            sorted_groups += 1
+        final_order.extend(members)
+    _log(f"  ✅  같은 단지 그룹 {sorted_groups}개를 동 → 호 오름차순으로 정렬")
 
     _log(f"  ✅  최종 {len(final_order)}건 순서 확정")
 

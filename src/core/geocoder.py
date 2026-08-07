@@ -10,6 +10,8 @@ import re
 import time
 import requests
 
+from core.address import strip_unit
+
 # HTTP keep-alive 세션 (병렬 스레드 안전)
 _SESSION = requests.Session()
 
@@ -23,8 +25,8 @@ def _build_queries(address: str) -> list:
     no_bracket = re.sub(r'\(.*?\)', '', address).strip()
     if no_bracket not in queries:
         queries.append(no_bracket)
-    stripped = re.sub(r'\d+동\s*\d+호|\d+층.*', '', address).strip().rstrip(',').strip()
-    if stripped not in queries:
+    stripped = strip_unit(address)
+    if stripped and stripped not in queries:
         queries.append(stripped)
     return queries
 
