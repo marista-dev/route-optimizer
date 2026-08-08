@@ -30,6 +30,10 @@ from core.geocoder  import geocode, reverse_geocode, verify_address
 from core.optimizer import build_time_matrix, optimize_route, RateLimitExceededError
 from core import settings
 
+# 릴리스 태그와 같이 올린다 (git tag v3.4.0 → GitHub Actions가 exe 빌드).
+# 사용자가 문제를 알릴 때 어느 빌드인지 바로 확인할 수 있도록 화면에 띄운다.
+APP_VERSION = "3.4.0"
+
 # ── 디자인 토큰 ───────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -772,7 +776,7 @@ class DoneDialog(ctk.CTkToplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("배송 경로 자동 정리")
+        self.title(f"배송 경로 자동 정리  v{APP_VERSION}")
         # 노트북(1366x768 등)에서 창이 화면 아래로 잘리지 않도록 화면에 맞춘다.
         # 창 크기 조절도 열어둔다 — 고정이면 잘린 채로 계속 써야 한다.
         try:
@@ -826,7 +830,8 @@ class App(ctk.CTk):
         ctk.CTkLabel(txt_col, text="배송 경로 자동 정리",
                      font=ctk.CTkFont(size=17, weight="bold"),
                      text_color=_TEXT).pack(anchor="w")
-        ctk.CTkLabel(txt_col, text="카카오 API 기반 최적 경로 계산",
+        ctk.CTkLabel(txt_col,
+                     text=f"카카오 API 기반 최적 경로 계산   ·   v{APP_VERSION}",
                      font=ctk.CTkFont(size=11),
                      text_color=_SUBTEXT).pack(anchor="w")
 
