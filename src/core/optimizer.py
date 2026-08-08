@@ -474,13 +474,19 @@ def build_time_matrix(nodes: list, headers: dict,
 # 5단계: TSP(클러스터) + NN(클러스터 내부) + 멤버 펼침
 def optimize_route(nodes: list, time_matrix: list,
                    primary_groups: dict, secondary_clusters: dict,
-                   log_cb=None):
+                   log_cb=None, stop_event: threading.Event = None):
     """
     5단계: 2차 대표 TSP → 클러스터 내부 NN → 1차 멤버 펼침.
+
+    stop_event를 주면 TSP 탐색 중에도 중단 요청을 확인한다
+    (OR-Tools 해 갱신 콜백에서 FinishCurrentSearch 호출).
     """
     def _log(msg):
         if log_cb:
             log_cb(msg)
+
+    def _stopped():
+        return stop_event is not None and stop_event.is_set()
 
     n = len(nodes)
     if n <= 1:
@@ -543,7 +549,23 @@ def optimize_route(nodes: list, time_matrix: list,
 
         _log(f"       TSP 제한 시간: {params.time_limit.seconds}초")
 
+        # 중단 요청을 탐색 도중에도 반영 — 해가 갱신될 때마다 확인하고 끊는다.
+        # (OR-Tools 버전에 따라 미지원일 수 있어 실패해도 진행 — 그 경우
+        #  제한 시간까지는 기다려야 하지만 결과는 정상)
+        if stop_event is not None:
+            try:
+                def _abort_if_stopped():
+                    if stop_event.is_set():
+                        routing.solver().FinishCurrentSearch()
+                routing.AddAtSolutionCallback(_abort_if_stopped)
+            except Exception:
+                pass
+
         sol = routing.SolveWithParameters(params)
+
+        if _stopped():
+            _log("  ⏹  중단 요청 — TSP 중단")
+            return None
 
         if sol:
             cluster_order = []

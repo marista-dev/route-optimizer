@@ -28,6 +28,7 @@ sys.path.insert(0, BASE)
 
 from core.geocoder  import geocode, reverse_geocode, verify_address
 from core.optimizer import build_time_matrix, optimize_route, RateLimitExceededError
+from core import settings
 
 # ── 디자인 토큰 ───────────────────────────────────────────────────────────────
 ctk.set_appearance_mode("light")
@@ -303,10 +304,54 @@ def _divider(parent):
                  corner_radius=0).pack(fill="x", pady=8)
 
 
+def _fmt_duration(seconds: float) -> str:
+    """남은 시간을 '3분 20초' / '45초' 형태로."""
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}초"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}분 {s}초" if s else f"{m}분"
+    h, m = divmod(m, 60)
+    return f"{h}시간 {m}분"
+
+
+def _set_entry_masked(entry, masked: bool):
+    """API 키 입력칸 가림/보임 전환.
+
+    customtkinter 버전에 따라 configure(show=...)를 안 받는 경우가 있어
+    내부 tkinter Entry로 폴백한다.
+    """
+    show = "*" if masked else ""
+    try:
+        entry.configure(show=show)
+        return
+    except Exception:
+        pass
+    try:
+        entry._entry.configure(show=show)
+    except Exception:
+        pass
+
+
+class _SafeAfterMixin:
+    """이미 닫힌 창에 콜백을 걸어 조용히 터지는 것을 막는다.
+
+    주소 검색은 브라우저 응답을 기다리는 백그라운드 스레드가 결과를 들고
+    돌아오는데, 그 사이 사용자가 창을 닫았을 수 있다.
+    """
+    def safe_after(self, delay, fn, *args):
+        try:
+            if self.winfo_exists():
+                self.after(delay, fn, *args)
+        except Exception:
+            pass
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 출발지 주소 찾기 팝업
 # ─────────────────────────────────────────────────────────────────────────────
-class AddressSearchDialog(ctk.CTkToplevel):
+class AddressSearchDialog(_SafeAfterMixin, ctk.CTkToplevel):
     def __init__(self, parent, headers: dict):
         super().__init__(parent)
         self.headers = headers
@@ -371,11 +416,11 @@ class AddressSearchDialog(ctk.CTkToplevel):
             if geo:
                 self.result = {'address': raw['address'],
                                'lat': geo['lat'], 'lon': geo['lon']}
-                self.after(0, self._on_success)
+                self.safe_after(0, self._on_success)
             else:
-                self.after(0, self._on_fail)
+                self.safe_after(0, self._on_fail)
         else:
-            self.after(0, self._on_cancel)
+            self.safe_after(0, self._on_cancel)
 
     def _on_success(self):
         self.status.configure(text=f"✅  {self.result['address']}",
@@ -404,7 +449,7 @@ class AddressSearchDialog(ctk.CTkToplevel):
 # ─────────────────────────────────────────────────────────────────────────────
 # 주소 불일치 수정 팝업
 # ─────────────────────────────────────────────────────────────────────────────
-class AddressFixDialog(ctk.CTkToplevel):
+class AddressFixDialog(_SafeAfterMixin, ctk.CTkToplevel):
     def __init__(self, parent, headers: dict,
                  name: str, orig: str, rev: str,
                  event: threading.Event, result_holder: dict):
@@ -414,7 +459,7 @@ class AddressFixDialog(ctk.CTkToplevel):
         self.result_holder = result_holder
         self._pending      = None
         self.title("주소 확인 필요")
-        self.geometry("520x430")
+        self.geometry("520x486")
         self.resizable(False, False)
         self.configure(fg_color=_BG)
         self.grab_set()
@@ -481,6 +526,16 @@ class AddressFixDialog(ctk.CTkToplevel):
                        text_color=_TEXT,
                        command=self._skip).pack(side="left", expand=True)
 
+        # 불일치가 수십 건이면 매번 팝업을 닫는 것 자체가 일이다.
+        # 남은 건을 한 번에 원본으로 처리하는 탈출구.
+        ctk.CTkButton(inner, text="⏭   나머지 불일치도 모두 원본 사용",
+                      height=34, corner_radius=10,
+                      fg_color="transparent", hover_color=_SHADOW,
+                      text_color=_SUBTEXT, border_width=1,
+                      border_color=_BORDER,
+                      font=ctk.CTkFont(size=11),
+                      command=self._skip_all).pack(fill="x", pady=(8, 0))
+
     def _launch(self):
         self.search_btn.configure(state="disabled",
                                   text="⏳  브라우저에서 주소를 선택해주세요...")
@@ -496,11 +551,11 @@ class AddressFixDialog(ctk.CTkToplevel):
                 self._pending = {'address': raw['address'], 'lat': geo['lat'],
                                  'lon': geo['lon'], 'reverse': rev,
                                  'verdict': verdict}
-                self.after(0, self._on_success, verdict, raw['address'])
+                self.safe_after(0, self._on_success, verdict, raw['address'])
             else:
-                self.after(0, self._on_fail)
+                self.safe_after(0, self._on_fail)
         else:
-            self.after(0, self._on_cancel)
+            self.safe_after(0, self._on_cancel)
 
     def _on_success(self, verdict, addr):
         color = _SUCCESS if verdict == '일치' else _WARN
@@ -535,15 +590,123 @@ class AddressFixDialog(ctk.CTkToplevel):
         self.event.set()
         self.destroy()
 
+    def _skip_all(self):
+        """이번 건부터 남은 불일치 전부 원본 사용 (더 이상 팝업 안 띄움)."""
+        self.result_holder.clear()
+        self.result_holder['skip_all'] = True
+        self.event.set()
+        self.destroy()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 완료 팝업
 # ─────────────────────────────────────────────────────────────────────────────
+class ApiKeyDialog(ctk.CTkToplevel):
+    """API 일일 한도 초과 시 새 키를 바로 받아 재실행까지 이어주는 창.
+
+    한도가 차면 그날의 작업이 통째로 막히는데, 기존에는 알림만 띄우고
+    사용자가 직접 키 입력칸을 찾아 다시 넣어야 했다.
+    """
+    def __init__(self, parent, error):
+        super().__init__(parent)
+        self.result = None      # {'key': ..., 'rerun': bool}
+        self.title("API 한도 초과 — 새 키 입력")
+        self.geometry("520x400")
+        self.resizable(False, False)
+        self.configure(fg_color=_BG)
+        self.grab_set()
+        self._build(error)
+
+    def _build(self, error):
+        card = _card(self)
+        card.pack(fill="both", expand=True, padx=18, pady=18)
+
+        top = ctk.CTkFrame(card, fg_color="#FEF2F2", corner_radius=10, height=44)
+        top.pack(fill="x", padx=14, pady=(14, 0))
+        top.pack_propagate(False)
+        ctk.CTkLabel(top, text="🚨   API 일일 한도(10,000건) 초과",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=_DANGER).pack(expand=True)
+
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=20, pady=12)
+
+        detail = "지금까지의 도로 시간 수집 결과는 저장되지 않습니다."
+        if error is not None and getattr(error, 'progress', None):
+            done, total = error.progress
+            detail = f"진행 {done}/{total}쌍에서 중단 — 이 결과는 저장되지 않습니다."
+        ctk.CTkLabel(inner, text=detail, wraplength=440,
+                     font=ctk.CTkFont(size=11),
+                     text_color=_SUBTEXT).pack(anchor="w", pady=(0, 10))
+
+        ctk.CTkLabel(inner,
+                     text="새 카카오 REST API 키를 넣으면 바로 다시 시작할 수 있습니다.\n"
+                          "키가 없으면 자정(KST) 이후 같은 키로 재실행하세요.",
+                     wraplength=440, justify="left",
+                     font=ctk.CTkFont(size=11),
+                     text_color=_TEXT).pack(anchor="w", pady=(0, 12))
+
+        _label_sm(inner, "새 카카오 REST API 키")
+        row = ctk.CTkFrame(inner, fg_color="transparent")
+        row.pack(fill="x")
+        self.entry = ctk.CTkEntry(
+            row, placeholder_text="새 API 키를 붙여넣으세요",
+            height=42, corner_radius=10, show="*",
+            fg_color=_SHADOW, border_color=_BORDER, border_width=1,
+            text_color=_TEXT, placeholder_text_color="#94A3B8",
+            font=ctk.CTkFont(size=12))
+        self.entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.eye_btn = ctk.CTkButton(
+            row, text="👁", width=46, height=42, corner_radius=10,
+            fg_color=_SHADOW, hover_color=_BLUE_MID, text_color=_TEXT,
+            border_width=1, border_color=_BORDER,
+            command=self._toggle_show)
+        self.eye_btn.pack(side="left")
+
+        self.msg = ctk.CTkLabel(inner, text="", font=ctk.CTkFont(size=11),
+                                text_color=_WARN, wraplength=440)
+        self.msg.pack(anchor="w", pady=(8, 10))
+
+        btns = ctk.CTkFrame(inner, fg_color="transparent")
+        btns.pack(fill="x")
+        ctk.CTkButton(btns, text="▶  새 키로 다시 실행",
+                      height=40, corner_radius=10,
+                      fg_color=_BLUE, hover_color="#1D4ED8",
+                      font=ctk.CTkFont(size=12, weight="bold"),
+                      command=lambda: self._confirm(True)).pack(
+            side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(btns, text="키만 저장", height=40, corner_radius=10,
+                      fg_color=_SHADOW, hover_color=_BLUE_MID,
+                      text_color=_TEXT, border_width=1, border_color=_BORDER,
+                      command=lambda: self._confirm(False)).pack(
+            side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(btns, text="나중에", height=40, corner_radius=10,
+                      fg_color=_BORDER, hover_color="#CBD5E1",
+                      text_color=_TEXT,
+                      command=self.destroy).pack(side="left", expand=True, fill="x")
+
+        self.entry.focus_set()
+        self.bind("<Return>", lambda _e: self._confirm(True))
+
+    def _toggle_show(self):
+        self._masked = not getattr(self, '_masked', True)
+        _set_entry_masked(self.entry, self._masked)
+
+    def _confirm(self, rerun: bool):
+        key = self.entry.get().strip()
+        if not key:
+            self.msg.configure(text="⚠️  새 API 키를 입력해주세요.")
+            return
+        self.result = {'key': key, 'rerun': rerun}
+        self.destroy()
+
+
 class DoneDialog(ctk.CTkToplevel):
-    def __init__(self, parent, output_path: str, warn_cnt: int):
+    def __init__(self, parent, output_path: str, warn_cnt: int,
+                 csv_path: str = None):
         super().__init__(parent)
         self.title("작업 완료")
-        self.geometry("460x240")
+        self.geometry("460x286")
         self.resizable(False, False)
         self.configure(fg_color=_BG)
         self.grab_set()
@@ -567,6 +730,10 @@ class DoneDialog(ctk.CTkToplevel):
         ctk.CTkLabel(inner, text=fname,
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color=_TEXT).pack(pady=(0, 2))
+        if csv_path:
+            ctk.CTkLabel(inner, text=f"+ {os.path.basename(csv_path)}  (CSV 동시 저장)",
+                         font=ctk.CTkFont(size=11),
+                         text_color=_SUBTEXT).pack(pady=(0, 2))
         ctk.CTkLabel(inner, text=folder, wraplength=400,
                      font=ctk.CTkFont(size=10),
                      text_color=_SUBTEXT).pack(pady=(0, 8))
@@ -606,8 +773,15 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("배송 경로 자동 정리")
-        self.geometry("680x860")
-        self.resizable(False, False)
+        # 노트북(1366x768 등)에서 창이 화면 아래로 잘리지 않도록 화면에 맞춘다.
+        # 창 크기 조절도 열어둔다 — 고정이면 잘린 채로 계속 써야 한다.
+        try:
+            avail_h = self.winfo_screenheight() - 120
+        except Exception:
+            avail_h = 860
+        self.geometry(f"680x{max(560, min(860, avail_h))}")
+        self.minsize(600, 520)
+        self.resizable(True, True)
         self.configure(fg_color=_BG)
 
         # 윈도우 아이콘 (Windows 적용, macOS는 .ico 미지원으로 조용히 스킵)
@@ -623,8 +797,11 @@ class App(ctk.CTk):
         self.start_lat  = None
         self.start_lon  = None
         self._stop_evt  = threading.Event()
+        self._skip_all_fix = False   # 주소 불일치 팝업을 더 안 띄움
+        self._cfg       = settings.load()
 
         self._build_ui()
+        self._apply_saved_settings()
 
     def _build_ui(self):
         # 헤더
@@ -668,13 +845,30 @@ class App(ctk.CTk):
         i1 = ctk.CTkFrame(c1, fg_color="transparent")
         i1.pack(fill="x", padx=20, pady=18)
         _label_sm(i1, "① 카카오 REST API 키")
+        row1 = ctk.CTkFrame(i1, fg_color="transparent")
+        row1.pack(fill="x")
         self.api_entry = ctk.CTkEntry(
-            i1, placeholder_text="카카오 REST API 키를 입력하세요",
+            row1, placeholder_text="카카오 REST API 키를 입력하세요",
             height=42, corner_radius=10, show="*",
             fg_color=_SHADOW, border_color=_BORDER, border_width=1,
             text_color=_TEXT, placeholder_text_color="#94A3B8",
             font=ctk.CTkFont(size=12))
-        self.api_entry.pack(fill="x")
+        self.api_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        # 붙여넣은 키에 오타가 있어도 2단계 전멸 전까지 알 수 없어 보기 토글을 둔다
+        ctk.CTkButton(row1, text="👁", width=46, height=42, corner_radius=10,
+                      fg_color=_SHADOW, hover_color=_BLUE_MID,
+                      text_color=_TEXT, border_width=1, border_color=_BORDER,
+                      command=self._toggle_api_show).pack(side="left")
+
+        self.remember_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            i1, text="이 PC에 키 기억하기 (다음 실행 시 자동 입력)",
+            variable=self.remember_var, onvalue=True, offvalue=False,
+            checkbox_width=18, checkbox_height=18, corner_radius=5,
+            fg_color=_BLUE, hover_color="#1D4ED8", border_color=_BORDER,
+            border_width=2, text_color=_SUBTEXT,
+            font=ctk.CTkFont(size=11),
+            command=self._on_remember_toggle).pack(anchor="w", pady=(8, 0))
 
         # ② 출발지
         c2 = _card(body); c2.pack(fill="x", **G)
@@ -730,18 +924,19 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self._start)
         self.run_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        # 아이콘만 있으면 무슨 버튼인지 알 수 없어 글자를 같이 둔다
         self.stop_btn = ctk.CTkButton(
-            bf, text="⏹", height=52, width=64, corner_radius=12,
+            bf, text="⏹  중단", height=52, width=104, corner_radius=12,
             fg_color="#FEF2F2", hover_color="#FEE2E2",
             text_color=_DANGER, border_width=1, border_color="#FECACA",
-            font=ctk.CTkFont(size=20), state="disabled",
+            font=ctk.CTkFont(size=13, weight="bold"), state="disabled",
             command=self._request_stop)
         self.stop_btn.pack(side="left")
         self.refresh_btn = ctk.CTkButton(
-            bf, text="🔄", height=52, width=64, corner_radius=12,
+            bf, text="🔄  초기화", height=52, width=104, corner_radius=12,
             fg_color=_SHADOW, hover_color=_BLUE_MID,
             text_color=_TEXT, border_width=1, border_color=_BORDER,
-            font=ctk.CTkFont(size=20), state="disabled",
+            font=ctk.CTkFont(size=13, weight="bold"), state="disabled",
             command=self._refresh)
         self.refresh_btn.pack(side="left", padx=(8, 0))
 
@@ -779,6 +974,42 @@ class App(ctk.CTk):
 
         ctk.CTkFrame(body, fg_color="transparent", height=16).pack()
 
+    # ── 설정 저장/복원 ───────────────────────────────────────────────────────
+    def _apply_saved_settings(self):
+        """지난 실행에서 저장한 API 키·출발지를 화면에 채운다."""
+        cfg = self._cfg
+        self.remember_var.set(bool(cfg.get('remember_api_key', True)))
+        if cfg.get('api_key'):
+            self.api_entry.insert(0, cfg['api_key'])
+        lat, lon, addr = (cfg.get('origin_lat'), cfg.get('origin_lon'),
+                          cfg.get('origin_address'))
+        if lat is not None and lon is not None and addr:
+            self.start_lat, self.start_lon = lat, lon
+            self.addr_entry.configure(state="normal")
+            self.addr_entry.delete(0, "end")
+            self.addr_entry.insert(0, addr)
+            self.addr_entry.configure(state="disabled")
+            self.addr_ok.configure(text=f"✅  저장된 출발지: {addr}")
+
+    def _save_settings(self):
+        self._cfg.update({
+            'api_key': self.api_entry.get().strip(),
+            'remember_api_key': bool(self.remember_var.get()),
+            'origin_address': self.addr_entry.get().strip(),
+            'origin_lat': self.start_lat,
+            'origin_lon': self.start_lon,
+            'last_dir': os.path.dirname(self.file_path) if self.file_path else '',
+        })
+        settings.save(self._cfg)
+
+    def _on_remember_toggle(self):
+        # 체크를 끄면 이미 저장돼 있던 키도 즉시 지운다
+        self._save_settings()
+
+    def _toggle_api_show(self):
+        self._api_masked = not getattr(self, '_api_masked', True)
+        _set_entry_masked(self.api_entry, self._api_masked)
+
     # ── 이벤트 ───────────────────────────────────────────────────────────────
     def _find_origin(self):
         k = self.api_entry.get().strip()
@@ -795,13 +1026,16 @@ class App(ctk.CTk):
             self.addr_entry.insert(0, r['address'])
             self.addr_entry.configure(state="disabled")
             self.addr_ok.configure(text=f"✅  확인된 주소: {r['address']}")
+            self._save_settings()
 
     def _pick_file(self):
         p = filedialog.askopenfilename(
+            initialdir=self._cfg.get('last_dir') or None,
             filetypes=[("Excel 파일", "*.xlsx *.xls")])
         if p:
             self.file_path = p
             self.file_lbl.configure(text=os.path.basename(p), text_color=_TEXT)
+            self._save_settings()
 
     def _start(self):
         if not self.api_entry.get().strip():
@@ -813,7 +1047,9 @@ class App(ctk.CTk):
         if not self.file_path:
             messagebox.showwarning("입력 필요", "엑셀 파일을 선택해주세요.")
             return
+        self._save_settings()
         self._stop_evt.clear()
+        self._skip_all_fix = False
         self.run_btn.configure(state="disabled", text="⏳  작업 진행 중...")
         self.stop_btn.configure(state="normal")
         self.refresh_btn.configure(state="disabled")
@@ -1027,7 +1263,10 @@ class App(ctk.CTk):
                     verdict = verify_address(row['택배받을 주소'], rev)
                 else:
                     verdict = '위치없음'
-                if verdict not in ('일치', '위치없음', '확인불가'):
+                if verdict not in ('일치', '위치없음', '확인불가') and self._skip_all_fix:
+                    # 사용자가 '나머지 모두 원본 사용'을 눌렀음 — 팝업 생략
+                    self._log(f"  ➖  ({i+1}/{total})  {name}  — 불일치, 원본 그대로 사용")
+                elif verdict not in ('일치', '위치없음', '확인불가'):
                     self._log(f"  ⚠️   ({i+1}/{total})  {name}  — 불일치 → 팝업 확인")
                     self._step("⚠️  불일치 — 팝업에서 주소를 검색해주세요",
                                0.38 + (i + 1) / total * 0.07, _WARN)
@@ -1036,7 +1275,10 @@ class App(ctk.CTk):
                                row['택배받을 주소'], rev, ev, holder)
                     ev.wait()
                     if self._stopped(): self._abort(); return
-                    if holder:
+                    if holder.get('skip_all'):
+                        self._skip_all_fix = True
+                        self._log("     →  이후 불일치는 모두 원본 그대로 사용")
+                    elif holder:
                         df.at[di, 'Latitude']      = holder['lat']
                         df.at[di, 'Longitude']     = holder['lon']
                         df.at[di, '카카오_확인주소'] = holder['address']
@@ -1073,10 +1315,18 @@ class App(ctk.CTk):
                               'lat': row['Latitude'], 'lon': row['Longitude'],
                               'address': row.get('택배받을 주소', '')})
 
+            # 가장 오래 걸리는 단계(10~15분)라 남은 시간을 같이 보여준다.
+            # 표시가 없으면 멈춘 것으로 오해하기 쉽다.
+            t_start = time.time()
+
             def _prog(done, tot):
                 if self._stopped(): return
-                self._step("4단계 — 도로 시간 수집 중",
-                           0.46 + done / tot * 0.24)
+                label = "4단계 — 도로 시간 수집 중"
+                if done >= 20 and tot > done:
+                    elapsed = time.time() - t_start
+                    remain = elapsed / done * (tot - done)
+                    label += f"  (남은 시간 약 {_fmt_duration(remain)})"
+                self._step(label, 0.46 + done / tot * 0.24)
 
             matrix, primary_groups, secondary_clusters = build_time_matrix(
                 nodes, headers,
@@ -1092,7 +1342,8 @@ class App(ctk.CTk):
             self._log("─" * 36)
             ordered = optimize_route(nodes, matrix,
                                       primary_groups, secondary_clusters,
-                                      log_cb=self._log)
+                                      log_cb=self._log,
+                                      stop_event=self._stop_evt)
             if self._stopped(): self._abort(); return
             if ordered is None:
                 self._log("❌  순서 계산 실패"); self._reset_btn(); return
@@ -1104,14 +1355,14 @@ class App(ctk.CTk):
             self._step("6단계 — 결과 파일 저장 중", 0.90)
             self._log(f"\n{'─'*36}"); self._log("  6단계   결과 파일 저장")
             self._log("─" * 36)
-            out = self._save_xlsx(mapping, df)
+            out, out_csv = self._save_xlsx(mapping, df)
             if out is None:
                 self._reset_btn(); return
             self._step("✅  모든 작업 완료!", 1.0, _SUCCESS)
             self._log(f"\n🎉  완료!")
             self._log(f"    파일명: {os.path.basename(out)}")
             self._log(f"    위치:   {os.path.dirname(out)}")
-            self.after(0, lambda: DoneDialog(self, out, warn_cnt))
+            self.after(0, lambda: DoneDialog(self, out, warn_cnt, out_csv))
 
         except RateLimitExceededError as e:
             # API 일일 한도 초과 → 알림창 + 자동 초기화
@@ -1134,24 +1385,25 @@ class App(ctk.CTk):
             self._reset_btn()
 
     def _show_rate_limit_dialog(self, error):
-        """API 일일 한도 초과 알림 — 확인 누르면 자동 초기화."""
-        progress_str = ""
-        if error.progress:
-            done, total = error.progress
-            progress_str = f"\n\n진행: {done}/{total}쌍 (작업 폐기됨)"
+        """API 일일 한도 초과 — 새 키를 바로 받아 원하면 재실행까지 이어준다."""
+        dlg = ApiKeyDialog(self, error)
+        self.wait_window(dlg)
 
-        msg = (
-            "카카오 모빌리티 API의 일일 호출 한도(10,000건)가 "
-            "초과되었습니다.\n\n"
-            "다음 중 하나를 시도해주세요:\n"
-            "  • 새 API 키로 교체 후 재실행\n"
-            "  • 자정 이후 다시 실행\n"
-            f"  • 동일한 API 키는 자정 KST에 한도가 초기화됩니다"
-            + progress_str
-        )
-        messagebox.showwarning("API 한도 초과", msg)
-        # 알림 확인 후 자동 초기화
         self._refresh()
+
+        if not dlg.result:
+            self._log("ℹ️  새 API 키 없이 종료 — 자정(KST) 이후 다시 실행해주세요")
+            return
+
+        self.api_entry.delete(0, "end")
+        self.api_entry.insert(0, dlg.result['key'])
+        self._save_settings()
+        self._log("✅  새 API 키가 적용되었습니다")
+
+        if dlg.result['rerun']:
+            # _refresh/_reset_btn이 예약해 둔 after 콜백이 먼저 끝나도록 살짝 미룬다
+            self._log("▶  새 키로 처음부터 다시 시작합니다")
+            self.after(300, self._start)
 
     def _save_xlsx(self, mapping: dict, df: pd.DataFrame):
         try:
@@ -1214,12 +1466,12 @@ class App(ctk.CTk):
             df_csv.to_csv(out_csv, index=False, encoding='utf-8-sig')
             self._log(f"✅  csv 저장: {os.path.basename(out_csv)}")
 
-            return out_xlsx
+            return out_xlsx, out_csv
         except Exception as e:
             import traceback
             self._log(f"❌  저장 실패: {type(e).__name__}: {e}")
             self._log(f"     상세:\n{traceback.format_exc()}")
-            return None
+            return None, None
 
 
 if __name__ == "__main__":
