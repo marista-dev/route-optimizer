@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 
 import { FileDrop, KeyInput, PostcodeModal } from '../components';
@@ -28,6 +28,7 @@ export function StartScreen() {
   const addressColumn = useSessionStore((s) => s.addressColumn);
   const headers = useSessionStore((s) => s.headers);
   const rows = useSessionStore((s) => s.rows);
+  const nodes = useSessionStore((s) => s.nodes);
   const savedStep = useSessionStore((s) => s.step);
   const savedAt = useSessionStore((s) => s.savedAt);
   const thresholdM = useSessionStore((s) => s.thresholdM);
@@ -44,7 +45,13 @@ export function StartScreen() {
 
   const [keyValue, setKeyValue] = useState('');
   const [postcodeOpen, setPostcodeOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // 파일 파싱과 출발지 지오코딩은 서로 다른 카드에서 돈다. 한 값을 나눠 쓰면
+  // 만지지도 않은 드롭존에 "파일을 읽는 중…"이 뜬다.
+  const [parsing, setParsing] = useState(false);
+  const [originBusy, setOriginBusy] = useState(false);
+  // 토스트는 지나가고 만다. 왜 업로드가 안 됐는지는 화면에 남아 있어야 한다.
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
 
   const hasFile = rows.length > 0;
   // 핸드오프의 파일 바: "택배받을 주소 (E열)" · "124행 · 빈 주소 0"
@@ -52,7 +59,17 @@ export function StartScreen() {
     ? `${addressColumn} (${columnLetter(headers.indexOf(addressColumn))}열)`
     : '—';
   const emptyAddresses = emptyAddressCount(rows);
-  const canStart = hasKey && hasFile && !busy;
+  const canStart = hasKey && hasFile && !parsing && !originBusy;
+  // 회색 버튼만 보여 주면 왜 안 눌리는지 알 길이 없다. 남은 조건을 한 줄로 적는다.
+  const startHint = !hasKey
+    ? 'REST API 키를 입력하세요'
+    : parsing
+      ? '파일을 읽는 중입니다'
+      : !hasFile
+        ? '파일을 올리세요'
+        : originBusy
+          ? '출발지 좌표를 확인하는 중입니다'
+          : null;
 
   const onKeyChange = (value: string) => {
     setKeyValue(value);
@@ -62,10 +79,10 @@ export function StartScreen() {
   const onPickOrigin = async (address: string) => {
     setPostcodeOpen(false);
     if (!hasKey) {
-      showError('REST 키를 먼저 입력하세요.');
+      showError('REST API 키를 먼저 입력하세요.');
       return;
     }
-    setBusy(true);
+    setOriginBusy(true);
     try {
       const found = await geocode(address, kakaoHeaders());
       if (!found) {
@@ -76,21 +93,40 @@ export function StartScreen() {
     } catch (err) {
       showApiError(err, '출발지 지오코딩에 실패했습니다.');
     } finally {
-      setBusy(false);
+      setOriginBusy(false);
     }
   };
 
   const onFile = async (file: File) => {
-    setBusy(true);
+    setParsing(true);
+    setUploadError(null);
     try {
       const parsed = await parseUploadedFile(file, file.name);
       setFile(file.name, parsed.sheetName, parsed.addressColumn, parsed.headers, parsed.rows);
       setBuffer(parsed.originalBuffer);
     } catch (err) {
-      showError(err instanceof Error ? err.message : '파일을 읽지 못했습니다.');
+      const message = err instanceof Error ? err.message : '파일을 읽지 못했습니다.';
+      showError(message);
+      setUploadError(`${file.name}: ${message}`);
     } finally {
-      setBusy(false);
+      setParsing(false);
     }
+  };
+
+  /**
+   * "교체"는 이름대로 교체해야 한다 — 파일 선택 창을 열고, 새 파일을 실제로 고른
+   * 뒤에만 `onFile`이 `setFile`을 부른다. 취소하면 지금 파일이 그대로 남는다.
+   */
+  const onReplace = () => {
+    if (
+      nodes.length > 0 &&
+      !window.confirm(
+        `새 파일을 올리면 지오코딩 결과 ${nodes.length}건과 이후 작업이 모두 지워집니다. 계속할까요?`,
+      )
+    ) {
+      return;
+    }
+    replaceInputRef.current?.click();
   };
 
   return (
@@ -112,7 +148,9 @@ export function StartScreen() {
               <button
                 type="button"
                 className="ro-btn ro-btn--sm ro-btn--quiet"
+                title="업로드한 명단과 진행 상황을 이 브라우저에서 지웁니다"
                 onClick={() => {
+                  if (!window.confirm('업로드한 명단과 진행 상황을 모두 지울까요?')) return;
                   reset();
                   setBuffer(null);
                   resolveResume();
@@ -135,7 +173,7 @@ export function StartScreen() {
         <div className="ro-s1__grid">
           <section className="ro-card">
             <div className="ro-card__head">
-              <div className="ro-card__title">1. REST API Key</div>
+              <div className="ro-card__title">1. REST API 키</div>
               <div className="ro-card__note">이 탭에서만 유지</div>
             </div>
             <KeyInput value={keyValue} onChange={onKeyChange} />
@@ -143,8 +181,11 @@ export function StartScreen() {
 
           <section className="ro-card">
             <div className="ro-card__head">
-              <div className="ro-card__title">2. 출발지</div>
-              <div className="ro-card__note">지난 출발지 기억됨</div>
+              {/* canStart에 들어가지 않는 선택 항목이다. 필수처럼 읽히지 않게 제목에 적는다. */}
+              <div className="ro-card__title">2. 출발지 (선택)</div>
+              <div className="ro-card__note">
+                {origin ? '지난 출발지 기억됨' : '없으면 첫 클러스터의 진입 지점 추천이 빠집니다'}
+              </div>
             </div>
             <div className="ro-row ro-row--center">
               {origin ? (
@@ -156,11 +197,21 @@ export function StartScreen() {
               <button
                 type="button"
                 className="ro-btn ro-btn--soft"
+                // 키가 없으면 고른 주소가 그대로 버려진다. 검색을 시작하기 전에 막는다.
+                disabled={!hasKey || originBusy}
+                title={
+                  !hasKey
+                    ? 'REST API 키를 먼저 입력하세요'
+                    : originBusy
+                      ? '출발지 좌표를 확인하는 중입니다'
+                      : undefined
+                }
                 onClick={() => setPostcodeOpen(true)}
               >
                 주소 찾기
               </button>
             </div>
+            {originBusy ? <p className="ro-hint ro-hint--small">출발지 좌표를 확인하는 중…</p> : null}
             {origin ? (
               <div className="ro-confirm">
                 <Check size={15} />지오코딩 확인 · {origin.lat.toFixed(4)}, {origin.lon.toFixed(4)}
@@ -200,20 +251,36 @@ export function StartScreen() {
                 type="button"
                 className="ro-btn ro-btn--sm ro-btn--quiet"
                 style={{ margin: '0 12px' }}
-                onClick={() => {
-                  setFile('', null, null, [], []);
-                  setBuffer(null);
-                }}
+                disabled={parsing}
+                title="다른 파일을 골라 지금 파일을 대신합니다"
+                onClick={onReplace}
               >
-                교체
+                {parsing ? '읽는 중…' : '교체'}
               </button>
+              <input
+                ref={replaceInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void onFile(file);
+                  e.target.value = '';
+                }}
+              />
             </div>
           ) : (
-            <FileDrop onFile={onFile} busy={busy} />
+            <FileDrop onFile={onFile} busy={parsing} />
           )}
+          {uploadError ? (
+            <p className="ro-keystate is-invalid" role="alert">
+              {uploadError}
+            </p>
+          ) : null}
         </section>
 
         <div className="ro-s1__foot">
+          {startHint ? <span className="ro-hint">{startHint}</span> : null}
           <button
             type="button"
             className="ro-btn ro-btn--xl ro-btn--primary"

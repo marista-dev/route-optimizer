@@ -14,11 +14,11 @@ import { DataTable, PostcodeModal, ProgressBar, VerdictBadge } from '../componen
 import type { Column } from '../components';
 import { kakaoHeaders, useSessionStore } from '../store/session';
 import { showError } from '../store/toast';
+import { useVolatileStore } from '../store/volatile';
 import { VERDICT_HELP, VERDICT_LABEL, type Node, type Verdict } from '../types';
 import {
   ALL_VERDICTS,
   VERDICTS,
-  computeWarnCount,
   isFixable,
   seedsFromRows,
   showApiError,
@@ -40,8 +40,12 @@ export function GeocodeScreen() {
   const rows = useSessionStore((s) => s.rows);
   const addressColumn = useSessionStore((s) => s.addressColumn);
   const nodes = useSessionStore((s) => s.nodes);
+  const clusterOrder = useSessionStore((s) => s.clusterOrder);
+  const finalOrder = useSessionStore((s) => s.finalOrder);
+  const clusterPicks = useSessionStore((s) => s.clusterPicks);
   const setNodes = useSessionStore((s) => s.setNodes);
   const setStep = useSessionStore((s) => s.setStep);
+  const clearRestKey = useVolatileStore((s) => s.clearRestKey);
 
   const controllerRef = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
@@ -49,18 +53,41 @@ export function GeocodeScreen() {
   const [revDone, setRevDone] = useState(0);
   const [filter, setFilter] = useState<Verdict | typeof ALL_VERDICTS>(ALL_VERDICTS);
   const [fixing, setFixing] = useState<Node | null>(null);
+  // 수정 중인 노드 id. 왕복이 두 번이라 표시가 없으면 같은 행을 두 번 누르게 된다.
+  const [fixingId, setFixingId] = useState<number | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   // 중단하면 노드가 비어 있어 실행 effect가 다시 돌지 않는다. 이 값을 올려 재실행한다.
   const [attempt, setAttempt] = useState(0);
-  const [aborted, setAborted] = useState(false);
+  /*
+   * 조회가 멈춘 이유. 사용자가 누른 "중단"과 네트워크·서버 실패를 함께 담는다.
+   * 중단만 담았을 때는 와이파이가 끊기면 재시도 버튼이 아예 렌더되지 않아
+   * 화면에 다음 수가 없었다.
+   */
+  const [stopped, setStopped] = useState<{ aborted: boolean; message: string } | null>(null);
 
   const seeds = useMemo(() => seedsFromRows(rows, addressColumn), [rows, addressColumn]);
   const total = seeds.length;
   const done = !running && nodes.length > 0;
   const counts = useMemo(() => verdictCounts(nodes), [nodes]);
-  const warnCount = useMemo(() => computeWarnCount(nodes), [nodes]);
   const missingCount = counts['위치없음'] ?? 0;
   const needCount = counts['요확인'] ?? 0;
+
+  // 두 수치를 번갈아 쓰면 한쪽이 통째로 감춰진다. 화면의 어휘 그대로, 함께 적는다.
+  const clusterSub = [
+    missingCount > 0 ? `주소 못 찾음 ${missingCount}건 제외` : null,
+    needCount > 0 ? `주소 다름 ${needCount}건` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  // 화면 이름표가 스테퍼밖에 없어 27인치에서는 시선이 닿는 자리에 아무 말이 없다.
+  const heading = running
+    ? `주소 ${total}건 검증 중`
+    : done
+      ? needCount > 0
+        ? `검증 완료 — 확인이 필요한 ${needCount}건`
+        : `검증 완료 — ${nodes.length}건`
+      : `주소 ${total}건 검증`;
 
   /*
    * 주소를 고치면 그 행의 판정이 '직접 수정'으로 바뀐다. 마지막 한 건을 고치는 순간
@@ -100,9 +127,12 @@ export function GeocodeScreen() {
       setRunning(true);
       setGeoDone(0);
       setRevDone(0);
+      setStopped(null);
       try {
         if ((await probeRestKey(headers, signal)) === 'invalid') {
           showApiError(new KakaoAuthError(401), '');
+          // 키를 남겨 두면 입력 칸은 비었는데 헤더 칩은 "키 있음"이라 화면이 모순된다.
+          clearRestKey();
           setStep(1);
           return;
         }
@@ -154,12 +184,23 @@ export function GeocodeScreen() {
       } catch (err) {
         if (cancelled) return;
         if (isPoolAborted(err)) {
-          setAborted(true);
           // 중단하면 받아 둔 좌표도 버려진다 — "이어서"가 아니라 "처음부터"임을 분명히 한다.
-          showError('지오코딩을 중단했습니다. "다시 시작"을 누르면 처음부터 다시 조회합니다.');
+          const message = '지오코딩을 중단했습니다. "다시 시작"을 누르면 처음부터 다시 조회합니다.';
+          setStopped({ aborted: true, message });
+          showError(message);
         } else {
           showApiError(err, '지오코딩에 실패했습니다.');
-          if (err instanceof KakaoAuthError) setStep(1);
+          if (err instanceof KakaoAuthError) {
+            clearRestKey();
+            setStep(1);
+          } else {
+            setStopped({
+              aborted: false,
+              message: `지오코딩에 실패했습니다 — ${
+                err instanceof Error ? err.message : '알 수 없는 오류'
+              }. "다시 조회"를 누르면 처음부터 다시 조회합니다.`,
+            });
+          }
         }
       } finally {
         if (!cancelled) setRunning(false);
@@ -172,12 +213,33 @@ export function GeocodeScreen() {
       controller.abort();
     };
     // attempt는 "다시 시작" 버튼이 올리는 재실행 신호다.
-  }, [seeds, total, nodes.length, attempt, setNodes, setStep]);
+  }, [seeds, total, nodes.length, attempt, setNodes, setStep, clearRestKey]);
 
   const applyFix = async (address: string) => {
     const target = fixing;
     setFixing(null);
     if (!target) return;
+
+    /*
+     * 주소를 고치면 좌표가 바뀌고, `setNodes`는 그 아래 산출물을 전부 비운다.
+     * 클러스터 순서와 진입·이탈은 계산으로 되살릴 수 없는 순수 수작업이라
+     * 실제로 잃을 것이 있을 때만 무엇을 잃는지 숫자로 밝히고 확인을 받는다.
+     */
+    if (clusterOrder.length > 0 || finalOrder.length > 0) {
+      const pickCount = Object.values(clusterPicks).filter(
+        (pick) => pick.entry != null || pick.exit != null,
+      ).length;
+      const lost =
+        [
+          clusterOrder.length > 0 ? `클러스터 순서 ${clusterOrder.length}개` : null,
+          pickCount > 0 ? `진입·이탈 ${pickCount}개` : null,
+        ]
+          .filter(Boolean)
+          .join(', ') || '이후 단계의 결과';
+      if (!window.confirm(`주소를 고치면 ${lost}가 지워집니다. 계속할까요?`)) return;
+    }
+
+    setFixingId(target.id);
     const headers = kakaoHeaders();
     try {
       const found = await geocode(address, headers);
@@ -205,7 +267,12 @@ export function GeocodeScreen() {
       // 다른 두 호출부(초기 실행·재실행)와 마찬가지로 키가 잘못됐으면 S1로 돌려보낸다 —
       // 여기서만 REST 키 오류에 화면에 머무를 이유가 없다.
       showApiError(err, '주소 수정에 실패했습니다.');
-      if (err instanceof KakaoAuthError) setStep(1);
+      if (err instanceof KakaoAuthError) {
+        clearRestKey();
+        setStep(1);
+      }
+    } finally {
+      setFixingId(null);
     }
   };
 
@@ -225,7 +292,7 @@ export function GeocodeScreen() {
     ) {
       return;
     }
-    setAborted(false);
+    setStopped(null);
     setAttempt((n) => n + 1);
   };
 
@@ -250,10 +317,11 @@ export function GeocodeScreen() {
         <button
           type="button"
           className={`ro-btn ro-btn--xs${isFixable(n.verdict) ? ' ro-btn--primary' : ''}`}
+          disabled={fixingId === n.id}
           title="주소 찾기 창에서 올바른 주소를 고릅니다"
           onClick={() => setFixing(n)}
         >
-          주소 수정
+          {fixingId === n.id ? '수정 중…' : '주소 수정'}
         </button>
       ),
     },
@@ -262,6 +330,7 @@ export function GeocodeScreen() {
   return (
     <div className="ro-s2">
       <div className="ro-s2__bar">
+        <div style={{ fontWeight: 700, fontSize: 16 }}>{heading}</div>
         <div className="ro-s2__progress">
           <ProgressBar
             label="주소로 좌표 찾기"
@@ -276,13 +345,19 @@ export function GeocodeScreen() {
             tone="muted"
           />
           {running ? (
-            <button type="button" className="ro-btn ro-btn--danger-outline" onClick={abort}>
-              중단
+            <button
+              type="button"
+              className="ro-btn ro-btn--danger-outline"
+              // "중단"은 보통 일시정지로 읽힌다. 받아 둔 좌표를 버린다는 말을 누르기 전에 한다.
+              title="중단하면 지금까지 받은 좌표를 버리고 처음부터 다시 조회합니다"
+              onClick={abort}
+            >
+              중단(처음부터)
             </button>
           ) : null}
-          {aborted && !running ? (
+          {stopped && !running ? (
             <button type="button" className="ro-btn ro-btn--primary" onClick={restart}>
-              다시 시작
+              {stopped.aborted ? '다시 시작' : '다시 조회'}
             </button>
           ) : null}
           {done ? (
@@ -291,6 +366,13 @@ export function GeocodeScreen() {
             </div>
           ) : null}
         </div>
+
+        {/* 토스트만으로는 자리를 비운 사이 근거가 사라진다. 멈춘 이유는 화면에 남긴다. */}
+        {stopped && !running ? (
+          <div className="ro-hint" style={{ color: 'var(--danger)' }} role="alert">
+            {stopped.message}
+          </div>
+        ) : null}
 
         <div className="ro-s2__tools">
           <div className="ro-s2__filters">
@@ -314,13 +396,14 @@ export function GeocodeScreen() {
             })}
           </div>
           <div className="ro-row ro-row--center">
-            {needCount > 0 && !acknowledged ? (
+            {needCount > 0 ? (
+              // 한 번 누르면 노란 배경이 세션 내내 사라진다. 다시 켤 수 있어야 한다.
               <button
                 type="button"
                 className="ro-btn ro-btn--sm"
-                onClick={() => setAcknowledged(true)}
+                onClick={() => setAcknowledged((on) => !on)}
               >
-                주소 다름 {needCount}건 그대로 두기
+                주소 다름 {needCount}건 {acknowledged ? '다시 표시' : '그대로 두기'}
               </button>
             ) : null}
             <button
@@ -331,9 +414,7 @@ export function GeocodeScreen() {
             >
               클러스터링
               <ArrowRight size={18} />{' '}
-              <span className="ro-btn__sub">
-                {missingCount > 0 ? `주소 못 찾음 ${missingCount}건 제외` : `경고 ${warnCount}건`}
-              </span>
+              {clusterSub ? <span className="ro-btn__sub">{clusterSub}</span> : null}
             </button>
           </div>
         </div>

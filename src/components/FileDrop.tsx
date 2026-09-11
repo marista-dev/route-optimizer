@@ -17,15 +17,18 @@ export function FileDrop({ onFile, busy }: FileDropProps) {
       <button
         type="button"
         className={`ro-drop${over ? ' is-over' : ''}`}
+        // 읽는 중에 또 고르면 두 파싱이 겹쳐 나중 것이 먼저 것을 덮는다.
+        disabled={busy}
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
-          setOver(true);
+          if (!busy) setOver(true);
         }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => {
           e.preventDefault();
           setOver(false);
+          if (busy) return;
           const file = e.dataTransfer.files?.[0];
           if (file) onFile(file);
         }}

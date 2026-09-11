@@ -12,7 +12,7 @@ export interface KeyInputProps {
 }
 
 /** 입력 칸 placeholder. */
-const PLACEHOLDER = '32자리 REST API Key';
+const PLACEHOLDER = '32자리 REST API 키';
 
 /** 카카오 REST 키 길이. 이 길이가 되면 자동으로 확인한다. */
 const KEY_LENGTH = 32;
@@ -85,8 +85,13 @@ export function KeyInput({ value, onChange, autoFocus }: KeyInputProps) {
           spellCheck={false}
           autoComplete="off"
           autoFocus={autoFocus}
-          aria-label="카카오 REST API Key"
+          aria-label="카카오 REST API 키"
           onChange={(e) => onChange(e.target.value)}
+          // 32자 자동 확인이 안 도는 길이(오타·다른 키)에서는 Enter가 유일한 키보드 경로다.
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || key.length === 0 || status === 'checking') return;
+            verify(key);
+          }}
         />
         <button
           type="button"
