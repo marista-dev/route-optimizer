@@ -410,37 +410,40 @@ export function ResultScreen() {
                 엑셀 (xlsx)
               </button>
             </div>
+          {/*
+            편집 중에는 안내 한 줄 + 버튼 한 줄로 쌓는다. 520px 패널에서 긴 안내와 버튼
+            셋을 한 줄에 나란히 두면 서로 밀려 줄바꿈이 생긴다.
+            버튼은 위 다운로드 줄과 같이 균등 폭으로 맞춰 세로선이 흐트러지지 않게 한다.
+          */}
           <div className="ro-s6__edit">
             {editing ? (
               <>
-                <span className="ro-faint ro-hint--small">순서 편집 중 · 행을 끌거나 위·아래 버튼으로 이동</span>
-                <span className="ro-row">
-                  <button type="button" className="ro-btn ro-btn--sm" onClick={revertToComputed}>
+                <span className="ro-s6__edithint">끌거나 위·아래 버튼으로 순서를 바꿉니다</span>
+                <div className="ro-s6__editbtns">
+                  <button type="button" className="ro-btn ro-btn--md" onClick={revertToComputed}>
                     되돌리기
                   </button>
-                  <button type="button" className="ro-btn ro-btn--sm" onClick={cancelEdit}>
+                  <button type="button" className="ro-btn ro-btn--md" onClick={cancelEdit}>
                     취소
                   </button>
                   <button
                     type="button"
-                    className="ro-btn ro-btn--sm ro-btn--primary"
+                    className="ro-btn ro-btn--md ro-btn--primary"
                     onClick={applyEdit}
                   >
                     적용
                   </button>
-                </span>
+                </div>
               </>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className="ro-btn ro-btn--md ro-btn--grow"
-                  disabled={finalOrder.length === 0}
-                  onClick={startEdit}
-                >
-                  순서 편집
-                </button>
-              </>
+              <button
+                type="button"
+                className="ro-btn ro-btn--md"
+                disabled={finalOrder.length === 0}
+                onClick={startEdit}
+              >
+                순서 편집
+              </button>
             )}
           </div>
           <div className="ro-s6__notes">
