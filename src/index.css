@@ -489,6 +489,11 @@ input::placeholder {
 .ro-stat__label {
   font-size: 12.5px;
   color: var(--muted);
+  /* 세 칸이 패널 너비를 1/3씩 나눠 갖는다. 라벨이 접히면 그 칸만 키가 달라져
+     숫자 줄이 어긋난다. 접지 말고 넘치면 말줄임(전체 문구는 title로). */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ro-stat__value {
   font-size: 23px;

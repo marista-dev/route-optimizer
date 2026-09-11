@@ -280,7 +280,7 @@ export function ClusterScreen() {
             <div className="ro-stat__value">{clusters.length}</div>
           </div>
           <div className="ro-stat">
-            <div className="ro-stat__label">가장 많은 배송지</div>
+            <div className="ro-stat__label">최다 배송지</div>
             <div className="ro-stat__value">{maxMembers}</div>
           </div>
           <div className="ro-stat">
