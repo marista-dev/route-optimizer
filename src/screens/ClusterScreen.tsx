@@ -115,7 +115,7 @@ export function ClusterScreen() {
 
   const clusterHint =
     clusters.length < RECOMMEND_MIN
-      ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 한 덩어리가 너무 크면 임계값을 내려 나누세요.`
+      ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 한 클러스터가 너무 크면 임계값을 내려 나누세요.`
       : clusters.length > RECOMMEND_MAX
         ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 줄이려면 임계값을 올리세요.`
         : `권장 범위(${RECOMMEND_MIN}~${RECOMMEND_MAX}개) 안입니다. 다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다.`;
@@ -200,8 +200,8 @@ export function ClusterScreen() {
             <>
               {changesClustering && savedWork ? (
                 <p className="ro-hint ro-warn-text">
-                  묶음이 달라져 현재 저장된 순번 {orderedCount}개·진입이탈 {pickCount}개와
-                  맞지 않습니다. 넘어가면 지워집니다.
+                  임계값을 바꿔 클러스터가 달라집니다. 저장된 순번 {orderedCount}개와 진입·이탈{' '}
+                  {pickCount}개는 넘어가는 순간 지워집니다.
                 </p>
               ) : null}
               <button
@@ -220,7 +220,7 @@ export function ClusterScreen() {
                     if (
                       savedWork &&
                       !window.confirm(
-                        `묶음이 달라집니다. 저장된 순번 ${orderedCount}개·진입이탈 ${pickCount}개가 지워집니다. 계속할까요?`,
+                        `클러스터가 달라집니다. 저장된 순번 ${orderedCount}개와 진입·이탈 ${pickCount}개가 지워집니다. 계속할까요?`,
                       )
                     ) {
                       return;
@@ -280,11 +280,11 @@ export function ClusterScreen() {
             <div className="ro-stat__value">{clusters.length}</div>
           </div>
           <div className="ro-stat">
-            <div className="ro-stat__label">가장 큰 묶음</div>
+            <div className="ro-stat__label">가장 많은 배송지</div>
             <div className="ro-stat__value">{maxMembers}</div>
           </div>
           <div className="ro-stat">
-            <div className="ro-stat__label">배송지</div>
+            <div className="ro-stat__label">전체 배송지</div>
             <div className="ro-stat__value">{placedNodes}</div>
             {/* 좌표를 못 얻은 행은 여기 숫자에 들어 있지 않다. 마지막으로 되돌아볼 기회를 준다. */}
             {excludedNodes > 0 ? (

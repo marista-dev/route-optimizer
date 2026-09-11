@@ -271,7 +271,7 @@ export function OrderScreen() {
             // 옛 세션을 이어받으면 클러스터 없이 이 화면에 설 수 있다. 이유와 돌아갈 길을 준다.
             <>
               <p className="ro-hint">
-                클러스터가 없습니다. 클러스터링으로 돌아가 묶음을 먼저 만들어 주세요.
+                클러스터가 없습니다. 클러스터링으로 돌아가 먼저 만들어 주세요.
               </p>
               <button
                 type="button"
@@ -367,7 +367,7 @@ export function OrderScreen() {
                   이름은 한 줄로 자르고(전체는 title로), 건수는 그 아래 줄에 둔다. */}
               <span className="ro-orderitem__name" style={{ minWidth: 0 }}>
                 <span style={ROW_NAME_STYLE} title={nameById.get(clusterId) || undefined}>
-                  {nameById.get(clusterId) || '이름 없는 묶음'}
+                  {nameById.get(clusterId) || '이름 없는 클러스터'}
                 </span>
                 <span className="ro-orderitem__count">배송지 {sizeById.get(clusterId) ?? 0}건</span>
               </span>
