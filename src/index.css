@@ -1014,6 +1014,35 @@ input::placeholder {
   font-size: 14px;
 }
 
+/*
+ * 키보드 포커스 링. 버튼·칩·드롭존은 배경과 테두리를 직접 칠하므로 브라우저 기본
+ * 링이 묻힌다. 한 곳에서 공통으로 정의한다. 마우스 클릭에는 뜨지 않는다(:focus-visible).
+ */
+.ro-btn:focus-visible,
+.ro-filter:focus-visible,
+.ro-drop:focus-visible,
+.ro-step:focus-visible,
+.ro-orderitem__move:focus-visible,
+.ro-modal__x:focus-visible,
+.ro-toast__x:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ro-input:focus {
+  box-shadow: 0 0 0 3px var(--primary-tint);
+}
+
+/* 움직임을 줄이도록 설정한 사용자에게는 전환과 애니메이션을 끈다. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ── S2 ────────────────────────────────────────────────────────────────── */
 .ro-s2 {
   position: absolute;

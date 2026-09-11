@@ -50,6 +50,11 @@ export interface ClusterPick {
   timeMatrix?: Record<string, number>;
   /** Haversine 추정으로 채운 셀 수 */
   haversineFallbacks?: number;
+  /**
+   * 그 셀들의 키. 재계산할 때 실제 도로시간은 그대로 쓰고 이 칸만 다시 받는다.
+   * 개수만 알면 행렬을 통째로 재사용하거나 통째로 버리는 수밖에 없다.
+   */
+  haversineKeys?: string[];
 }
 
 /** 세션 상태에 붙는 변경 액션들. */
@@ -86,7 +91,10 @@ interface SessionActions {
     innerOrder: number[],
     timeMatrix: Record<string, number>,
     fallbacks: number,
+    fallbackKeys: string[],
   ) => void;
+  /** 한 클러스터의 진입·이탈·내부 순서를 지운다(확정 해제) */
+  clearClusterPick: (clusterId: number) => void;
   /** 최종 배송 순서 저장 */
   setFinalOrder: (finalOrder: number[]) => void;
   /** 출발지를 제외한 모든 작업 상태를 지운다("처음부터") */
@@ -128,6 +136,11 @@ const initialSession: Session = {
  * 작업 세션 스토어. localStorage에 저장되어 새로고침·재접속 시 "이어서 하기"를 제공한다.
  * REST 키는 여기 들어가지 않는다(`restKey` 참고).
  */
+/** 두 방문 순서가 같은지. 같으면 하위 산출물을 버리지 않는다. */
+function sameOrder(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 /** 모든 변경 액션이 함께 갱신하는 저장 시각. */
 const touch = (): Pick<SessionMeta, 'savedAt'> => ({ savedAt: Date.now() });
 
@@ -203,8 +216,24 @@ export const useSessionStore = create<SessionStore>()(
           ...touch(),
         }),
 
+      /*
+       * 순서가 바뀌면 진입·이탈과 도로시간 행렬은 더 이상 맞지 않으므로 버린다.
+       * 다만 **실제로 달라졌을 때만** 버린다 — S4의 주 조작이 지도 클릭이라, 지도를
+       * 끌다 다각형을 스치거나 잘못 눌러 되돌리는 일이 잦다. 값이 같은데도 버리면
+       * 그 한 번의 미스클릭이 이미 값을 치른 도로시간까지 전부 날린다.
+       */
       setClusterOrder: (clusterOrder) =>
-        set({ clusterOrder, finalOrder: [], clusterPicks: {}, ...touch() }),
+        set((state) =>
+          sameOrder(state.clusterOrder, clusterOrder)
+            ? { clusterOrder, ...touch() }
+            : { clusterOrder, finalOrder: [], clusterPicks: {}, ...touch() },
+        ),
+
+      clearClusterPick: (clusterId) =>
+        set((state) => {
+          const { [clusterId]: _dropped, ...rest } = state.clusterPicks;
+          return { clusterPicks: rest, finalOrder: [], ...touch() };
+        }),
 
       // 아래 두 액션은 `clusters`를 건드리지 않는다(지도 다각형 재생성 방지).
       setClusterEntryExit: (clusterId, entry, exit) =>
@@ -216,7 +245,7 @@ export const useSessionStore = create<SessionStore>()(
           ...touch(),
         })),
 
-      setClusterInnerOrder: (clusterId, innerOrder, timeMatrix, fallbacks) =>
+      setClusterInnerOrder: (clusterId, innerOrder, timeMatrix, fallbacks, fallbackKeys) =>
         set((state) => ({
           clusterPicks: {
             ...state.clusterPicks,
@@ -225,6 +254,7 @@ export const useSessionStore = create<SessionStore>()(
               innerOrder,
               timeMatrix,
               haversineFallbacks: fallbacks,
+              haversineKeys: fallbackKeys,
             },
           },
           ...touch(),
