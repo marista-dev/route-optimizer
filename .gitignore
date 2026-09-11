@@ -1,20 +1,26 @@
+# 의존성·빌드 산출물
+node_modules/
+dist/
+
+# 환경변수 (카카오 JavaScript 키)
+*.local
+
+# 로그
+*.log
+npm-debug.log*
+
 # IDE
 .idea/
 .vscode/
-*.iml
 .omc/
 .claude/
-
-# 빌드 산출물
-node_modules/
-dist/
 
 # OS
 .DS_Store
 Thumbs.db
 Icon
 
-# 테스트·샘플 데이터(실제 배송 명단이라 커밋하지 않는다)
+# 테스트·샘플 데이터 (실제 배송 명단이라 커밋하지 않는다)
 배송대상자 배송순서-*.xlsx
 *_배송순서완성.xlsx
 *_배송순서완성.csv

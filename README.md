@@ -22,7 +22,7 @@
 - 클러스터를 **어떤 순서로** 돌 것인가
 - 각 클러스터에 **어디로 들어가 어디로 나올 것인가**
 
-데스크톱 버전은 이 둘까지 전부 자동(OR-Tools TSP)이었는데, 도로 사정이나 주차 자리처럼 지도에 없는 사정을 반영하지 못해 실제 동선과 어긋나는 일이 있었습니다. 그래서 웹 버전은 판단이 필요한 곳만 사람에게 넘기고, 대신 API 호출 수가 크게 줄었습니다(수천 회 → 수백 회).
+원래는 이 둘까지 전부 자동(OR-Tools TSP)이었는데, 도로 사정이나 주차 자리처럼 지도에 없는 사정을 반영하지 못해 실제 동선과 어긋나는 일이 있었습니다. 그래서 판단이 필요한 곳만 사람에게 넘겼고, 대신 API 호출 수가 크게 줄었습니다(수천 회 → 수백 회).
 
 ---
 
@@ -60,28 +60,26 @@
 ## 개발
 
 ```bash
-cd web
 cp .env.example .env.local   # VITE_KAKAO_JS_KEY에 카카오 JavaScript 키를 넣는다
 npm install
 npm run dev                  # http://localhost:5173/route-optimizer/
 ```
 
-카카오 개발자 콘솔 > 앱 설정 > 플랫폼 > Web의 **사이트 도메인**에 `http://localhost:5173`과 배포 도메인을 등록해야 지도가 뜹니다.
-
 | 명령 | 설명 |
 |---|---|
 | `npm run dev` | 개발 서버 |
-| `npm run typecheck` | 타입 검사 (`tsc -b`) |
+| `npm run typecheck` | 타입 검사 (`tsc -b --force`) |
 | `npm test` | vitest 1회 실행 |
+| `npm run test:watch` | vitest 감시 모드 |
 | `npm run lint` | oxlint |
 | `npm run build` | 타입 검사 + 프로덕션 빌드 (`dist/`) |
 
-> `npx tsc --noEmit -p .`는 **아무것도 검사하지 않고 통과합니다.** 루트 tsconfig가 `references`만 가진 solution 구성이라 `--noEmit`과 결합하면 참조 프로젝트를 타지 않습니다. 타입 검사는 반드시 `npm run typecheck`나 `npm run build`로 하세요.
+> `npx tsc --noEmit -p .`는 **아무것도 검사하지 않고 통과합니다.** 루트 tsconfig가 `references`만 가진 solution 구성이라 `--noEmit`과 결합하면 참조 프로젝트를 타지 않습니다. 타입 검사는 `npm run typecheck`나 `npm run build`로 하세요.
 
 ### 구조
 
 ```
-web/src/
+src/
   core/      주소 파싱·그룹핑·클러스터링·클러스터 내부 경로 — 순수 함수, DOM 의존 없음
   api/       카카오 로컬(지오코딩)·모빌리티(도로시간) 호출, 재시도·rate limit
   io/        xlsx·csv 읽기와 결과 파일 생성
@@ -92,14 +90,19 @@ web/src/
 
 상태를 세 층으로 나눈 것은 **무엇이 얼마나 오래 남아야 하는지가 서로 다르기** 때문입니다. 진행 상황은 새로고침을 견뎌야 하고, 원본 파일 바이트는 메모리에만 있어도 되며, REST 키는 탭이 닫히면 사라져야 합니다.
 
-### 배포
+---
 
-`main`에 `web/**` 변경이 푸시되면 [pages.yml](.github/workflows/pages.yml)이 테스트·빌드 후 GitHub Pages로 배포합니다. 카카오 JavaScript 키는 저장소 Settings > Secrets and variables > Actions > **Variables**의 `VITE_KAKAO_JS_KEY`를 씁니다(Secret이 아닙니다 — 어차피 빌드 결과 HTML에 박히는 값이라 감출 대상이 아니고, 도메인 제한이 실제 보호막입니다).
+## 배포와 운영자 설정
+
+`main`에 푸시되면 [pages.yml](.github/workflows/pages.yml)이 테스트·빌드 후 GitHub Pages로 배포합니다.
+
+| 항목 | 설정 |
+|---|---|
+| GitHub | Settings > Pages의 Source를 **GitHub Actions**로. Settings > Secrets and variables > Actions > **Variables**에 `VITE_KAKAO_JS_KEY` 등록 |
+| 카카오 콘솔 | 앱 설정 > 플랫폼 > Web의 **사이트 도메인**에 `https://marista-dev.github.io`와 `http://localhost:5173` 등록 (경로는 빼고 도메인만) |
+| 무료 쿼터 | 2026-07-21 정책상 개발자 계정의 **첫 번째로 활성화한 앱**에만 무료 쿼터가 붙습니다. 지도를 켜는 앱과 길찾기를 쓰는 앱이 같아야 합니다 |
+
+JavaScript 키는 Secret이 아니라 Variable입니다. 어차피 빌드 결과 HTML에 그대로 박히는 값이라 감출 대상이 아니고, **도메인 제한이 실제 보호막**입니다. Variable을 등록하지 않으면 빌드는 성공하지만 키 자리가 치환되지 않아 지도만 뜨지 않습니다.
 
 ---
 
-## 이력
-
-Python + tkinter Windows 데스크톱 앱이 원본이며, `v3.4.0`(커밋 `158d81b`)이 마지막 버전입니다. 웹으로 옮기면서 주소 파싱·그룹핑 규칙은 그대로 이식했고, 두 구현이 같은 결과를 내는지 실제 배송 데이터 124건으로 대조했습니다. 그 대조 결과가 [web/src/core/\_\_fixtures\_\_](web/src/core/__fixtures__)에 남아 있습니다.
-
-미뤄 둔 일과 **일부러 하지 않기로 한 일**은 [docs/follow-ups.md](docs/follow-ups.md)에 정리돼 있습니다.
