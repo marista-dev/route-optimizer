@@ -30,6 +30,15 @@ export interface ClusterLayerProps {
   onClusterClick?: (clusterId: number) => void;
   /** `info` 모드 클릭 시 인포윈도우에 넣을 HTML(멤버 이름 목록 등) */
   memberSummary?: (clusterId: number) => string;
+  /**
+   * 클러스터의 배송 건수. 주면 hover 라벨의 "배송지 n건"이 이 값이 된다.
+   * 없으면 그룹(건물) 수를 그대로 "건물 n곳"이라 부른다 — 단위를 속이지 않는다.
+   */
+  countOf?: (clusterId: number) => number;
+  /** 클러스터를 부를 이름(대표 건물명 등). hover 라벨 끝에 붙는다 */
+  nameOf?: (clusterId: number) => string | undefined;
+  /** 목록 hover 등으로 잠시 강조할 클러스터 */
+  highlightClusterId?: number;
 }
 
 // Claude Design 핸드오프에서 가져온 지도 팔레트.
@@ -64,6 +73,15 @@ const STROKE_WEIGHT_ACTIVE = 3;
 
 /** 순번 배지의 zIndex. 지도 오버레이 중 가장 위다(`src/map/README.md`의 표 참고). */
 const Z_ORDER_BADGE = 10;
+
+/**
+ * 중심 히트 타깃의 지름(px). map.css의 44px을 덮어쓴다.
+ * 44px 원이 화면에 30~40개 흩어지면 지도를 끌려고 누른 지점이 자주 원 안에 걸려
+ * "가끔 지도가 안 움직인다"가 된다. 클릭은 여전히 넉넉한 선까지 줄였다.
+ */
+const HIT_SIZE_PX = 32;
+/** 이만큼 넘게 끌었으면 클릭으로 치지 않는다(지도를 옮기려던 손). */
+const DRAG_SLOP_PX = 5;
 
 /** {@link applyStyles}가 매 다각형마다 계산하는 표시 상태 하나. */
 type ClusterVisualState =
@@ -127,10 +145,24 @@ interface ClusterEntry {
  *
  * 순번이 붙은 클러스터는 순번으로 부른다 — S4 지도에 찍히는 숫자는 클러스터 id가
  * 아니라 방문 순번이라, id를 보여 주면 화면 어디에도 없는 번호를 말하는 셈이 된다.
+ * 순번을 매기는 화면에서 아직 순번이 없으면 번호를 아예 쓰지 않는다 — 배지의 "5"와
+ * "클러스터 5"가 서로 다른 것을 가리켜 읽는 사람을 멈춰 세우기 때문이다.
  */
-function defaultLabel(cluster: Cluster, order?: number | null): string {
-  const head = order ? `${order}번째 방문` : `클러스터 ${cluster.id + 1}`;
-  return `${head} · 배송지 ${cluster.groupIds.length}건`;
+function defaultLabel(
+  cluster: Cluster,
+  mode: ClusterMode,
+  order?: number | null,
+  count?: number,
+  name?: string,
+): string {
+  const head = order
+    ? `${order}번째 방문`
+    : mode === 'order'
+      ? '아직 미지정'
+      : `클러스터 ${cluster.id + 1}`;
+  // 건수를 모르면 그룹 수를 그룹 수라고 부른다. 목록·통계의 "배송지 n건"은 배송 건수다.
+  const size = count === undefined ? `건물 ${cluster.groupIds.length}곳` : `배송지 ${count}건`;
+  return [head, size, name].filter(Boolean).join(' · ');
 }
 
 /** 클러스터별 다각형 + hover 라벨 + 순번 라벨 레이어. */
@@ -144,6 +176,9 @@ export function ClusterLayer({
   nextClusterId,
   onClusterClick,
   memberSummary,
+  countOf,
+  nameOf,
+  highlightClusterId,
 }: ClusterLayerProps) {
   const { map } = useMapContext();
 
@@ -158,6 +193,9 @@ export function ClusterLayer({
     nextClusterId,
     onClusterClick,
     memberSummary,
+    countOf,
+    nameOf,
+    highlightClusterId,
   });
   // 아래 effect들보다 먼저 선언해 매 커밋에서 가장 먼저 갱신되게 한다.
   useEffect(() => {
@@ -171,6 +209,9 @@ export function ClusterLayer({
       nextClusterId,
       onClusterClick,
       memberSummary,
+      countOf,
+      nameOf,
+      highlightClusterId,
     };
   });
 
@@ -189,15 +230,17 @@ export function ClusterLayer({
       const done = dim && !active && !prev && !next && (cur.isDone?.(entry.id) ?? false);
       const idle = dim && !active && !prev && !next && !done;
       const state = pickState(cur.mode, active, prev, next, done, idle, ordered);
+      // 목록에서 가리키는 다각형은 마우스를 올린 것과 똑같이 보이게 한다(같은 값을 쓴다).
+      const highlight = cur.highlightClusterId === entry.id;
 
       entry.polygon.setOptions({
         strokeColor:
           prev || done ? DONE_STROKE : next ? NEXT_STROKE : idle ? IDLE_STROKE : BASE_STROKE,
-        strokeOpacity: STROKE[state],
-        strokeWeight: active ? STROKE_WEIGHT_ACTIVE : STROKE_WEIGHT,
+        strokeOpacity: highlight ? STROKE_OPACITY : STROKE[state],
+        strokeWeight: active || highlight ? STROKE_WEIGHT_ACTIVE : STROKE_WEIGHT,
         strokeStyle: next ? 'shortdash' : 'solid',
         fillColor: prev || done ? DONE_FILL : next ? NEXT_FILL : idle ? IDLE_FILL : BASE_FILL,
-        fillOpacity: FILL[state],
+        fillOpacity: highlight ? FILL_OPACITY_HOVER : FILL[state],
       });
 
       if (ordered && order !== undefined) {
@@ -262,9 +305,21 @@ export function ClusterLayer({
         zIndex: Z_ORDER_BADGE,
       });
 
+      /** 지금 값으로 만든 hover 라벨. 다각형과 중심 히트 타깃이 같은 문구를 쓴다. */
+      const labelNow = (): string => {
+        const cur = latest.current;
+        return defaultLabel(
+          cluster,
+          cur.mode,
+          cur.orderOf?.(cluster.id),
+          cur.countOf?.(cluster.id),
+          cur.nameOf?.(cluster.id),
+        );
+      };
+
       const onMouseOver = (event: any) => {
         const cur = latest.current;
-        hoverEl.textContent = defaultLabel(cluster, cur.orderOf?.(cluster.id));
+        hoverEl.textContent = labelNow();
         hoverOverlay.setPosition(event.latLng);
         hoverOverlay.setMap(cur.map);
         polygon.setOptions({ fillOpacity: FILL_OPACITY_HOVER });
@@ -308,10 +363,25 @@ export function ClusterLayer({
         const hitEl = document.createElement('div');
         hitEl.className = 'ro-cluster-hit';
         hitEl.setAttribute('role', 'presentation');
-        const onHitClick = () => select(centroidLL);
+        hitEl.style.width = `${HIT_SIZE_PX}px`;
+        hitEl.style.height = `${HIT_SIZE_PX}px`;
+        // 누른 자리에서 끌었으면 클릭으로 치지 않는다 — 지도를 옮기려던 손이
+        // 방문 순서를 바꾸면 되돌릴 길이 없다.
+        let downAt: { x: number; y: number } | null = null;
+        const onHitDown = (event: MouseEvent) => {
+          downAt = { x: event.clientX, y: event.clientY };
+        };
+        const onHitClick = (event: MouseEvent) => {
+          const moved =
+            downAt !== null &&
+            Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > DRAG_SLOP_PX;
+          downAt = null;
+          if (moved) return;
+          select(centroidLL);
+        };
         const onHitEnter = () => {
           const cur = latest.current;
-          hoverEl.textContent = defaultLabel(cluster, cur.orderOf?.(cluster.id));
+          hoverEl.textContent = labelNow();
           hoverOverlay.setPosition(centroidLL);
           hoverOverlay.setMap(cur.map);
           polygon.setOptions({ fillOpacity: FILL_OPACITY_HOVER });
@@ -320,10 +390,12 @@ export function ClusterLayer({
           hoverOverlay.setMap(null);
           applyStyles();
         };
+        hitEl.addEventListener('mousedown', onHitDown);
         hitEl.addEventListener('click', onHitClick);
         hitEl.addEventListener('mouseenter', onHitEnter);
         hitEl.addEventListener('mouseleave', onHitLeave);
         domCleanups.push(() => {
+          hitEl.removeEventListener('mousedown', onHitDown);
           hitEl.removeEventListener('click', onHitClick);
           hitEl.removeEventListener('mouseenter', onHitEnter);
           hitEl.removeEventListener('mouseleave', onHitLeave);
@@ -364,7 +436,16 @@ export function ClusterLayer({
   // 모드·순번·활성 클러스터가 바뀌면 옵션만 다시 칠한다.
   useEffect(() => {
     applyStyles();
-  }, [applyStyles, mode, orderOf, activeClusterId, isDone, prevClusterId, nextClusterId]);
+  }, [
+    applyStyles,
+    mode,
+    orderOf,
+    activeClusterId,
+    isDone,
+    prevClusterId,
+    nextClusterId,
+    highlightClusterId,
+  ]);
 
   return null;
 }
