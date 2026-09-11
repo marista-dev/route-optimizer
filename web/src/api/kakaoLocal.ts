@@ -156,3 +156,32 @@ export async function reverseGeocode(
   }
   return '';
 }
+
+// ── 키 확인 ──────────────────────────────────────────────────────────────────
+/** REST 키를 카카오 인증 헤더로. */
+export function authHeaders(key: string): KakaoHeaders {
+  return { Authorization: `KakaoAK ${key}` };
+}
+
+/**
+ * 키가 유효한지 한 번만 찔러본다.
+ *
+ * `geocode`는 401을 조용히 넘기고 null을 돌려주므로 잘못된 키와 '주소를 못 찾음'을
+ * 구분할 수 없다. 그래서 여기서만 로컬 API를 직접 호출해 상태 코드를 본다.
+ * 결과가 없어도 되는 질의라 좌표는 보지 않고 상태 코드만 읽는다.
+ */
+export async function probeRestKey(
+  headers: KakaoHeaders,
+  signal?: AbortSignal,
+): Promise<'ok' | 'invalid' | 'unknown'> {
+  try {
+    const resp = await fetch(
+      'https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent('서울특별시'),
+      { headers, signal },
+    );
+    if (resp.status === 401 || resp.status === 403) return 'invalid';
+    return resp.status === 200 ? 'ok' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}

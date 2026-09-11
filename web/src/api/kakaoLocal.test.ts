@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { KakaoAuthError, buildQueries, geocode, reverseGeocode } from './kakaoLocal';
+import {
+  KakaoAuthError,
+  authHeaders,
+  buildQueries,
+  geocode,
+  probeRestKey,
+  reverseGeocode,
+} from './kakaoLocal';
 
 const HEADERS = { Authorization: 'KakaoAK test-key' };
 // 합성 주소만 쓴다. 실제 배송 데이터는 테스트에 들어가지 않는다.
@@ -210,5 +217,41 @@ describe('KakaoAuthError', () => {
 
     await expect(geocode(ADDRESS, HEADERS, { sleep: async () => {} })).resolves.toBeNull();
     expect(urls.length).toBeGreaterThan(1);
+  });
+});
+
+describe('probeRestKey', () => {
+  it('200이면 ok', async () => {
+    stubFetch([{ status: 200, body: { documents: [] } }]);
+
+    await expect(probeRestKey(HEADERS)).resolves.toBe('ok');
+  });
+
+  it('401·403이면 invalid — 키가 거부된 것과 결과 없음을 구분한다', async () => {
+    stubFetch([{ status: 401 }]);
+    await expect(probeRestKey(HEADERS)).resolves.toBe('invalid');
+
+    stubFetch([{ status: 403 }]);
+    await expect(probeRestKey(HEADERS)).resolves.toBe('invalid');
+  });
+
+  it('5xx나 네트워크 실패는 unknown — 키 탓으로 단정하지 않는다', async () => {
+    stubFetch([{ status: 500 }]);
+    await expect(probeRestKey(HEADERS)).resolves.toBe('unknown');
+
+    stubFetch([new Error('network down')]);
+    await expect(probeRestKey(HEADERS)).resolves.toBe('unknown');
+  });
+
+  it('키 한 개당 요청 한 번만 나간다', async () => {
+    const urls = stubFetch([{ status: 200, body: { documents: [] } }]);
+
+    await probeRestKey(HEADERS);
+
+    expect(urls).toHaveLength(1);
+  });
+
+  it('authHeaders가 카카오 인증 형식을 만든다', () => {
+    expect(authHeaders('abc123')).toEqual({ Authorization: 'KakaoAK abc123' });
   });
 });

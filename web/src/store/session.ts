@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
+import { authHeaders } from '../api';
 import {
   DEFAULT_THRESHOLD_M,
   type Cluster,
@@ -278,5 +279,5 @@ export const restKey = {
 
 /** 카카오 REST API 호출용 Authorization 헤더를 만든다. */
 export function kakaoHeaders(): KakaoHeaders {
-  return { Authorization: `KakaoAK ${restKey.get()}` };
+  return authHeaders(restKey.get());
 }
