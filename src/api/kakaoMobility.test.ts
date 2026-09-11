@@ -155,6 +155,7 @@ describe('fetchTimeMatrix', () => {
     expect(result).toEqual({
       times: { '0-1': 300, '1-0': 300 },
       fallbacks: 0,
+      fallbackKeys: [],
       aborted: false,
     });
   });
@@ -167,6 +168,16 @@ describe('fetchTimeMatrix', () => {
     expect(result.fallbacks).toBe(2);
     expect(result.times['0-1']).toBe(haversineEstimateSec(A, B));
     expect(result.times['0-1']).toBeGreaterThan(0);
+    // 어느 칸이 추정치인지 알아야 재계산 때 그 칸만 다시 받을 수 있다.
+    expect(result.fallbackKeys.sort()).toEqual(['0-1', '1-0']);
+  });
+
+  it('성공한 칸은 추정 키에 들어가지 않는다', async () => {
+    stubFetch([ok(300)]);
+
+    const result = await fetchTimeMatrix(pairs, HEADERS, { sleep: async () => {} });
+
+    expect(result.fallbackKeys).toEqual([]);
   });
 
   it('진행률을 완료 수로 보고한다', async () => {

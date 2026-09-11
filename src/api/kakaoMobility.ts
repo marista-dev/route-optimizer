@@ -26,6 +26,7 @@
  * interface TimeMatrixResult {
  *   times: Record<string, number>;   // 스냅샷 복사본(호출 뒤 변하지 않는다)
  *   fallbacks: number;               // Haversine으로 메운 셀 수
+ *   fallbackKeys: string[];          // 그 셀들의 키
  *   aborted: boolean;                // signal이 abort됐으면 true
  * }
  *
@@ -99,6 +100,14 @@ export interface TimeMatrixPartial {
   times: Record<string, number>;
   /** 그중 Haversine으로 메운 칸 수 */
   fallbacks: number;
+  /**
+   * Haversine으로 메운 칸의 키.
+   *
+   * 개수만으로는 어느 칸이 추정치인지 알 수 없어, 재계산할 때 행렬을 통째로
+   * 재사용하거나 통째로 버리는 수밖에 없다. 키를 남겨 두면 실제 도로시간은
+   * 그대로 쓰고 추정치가 들어간 칸만 다시 받을 수 있다.
+   */
+  fallbackKeys: string[];
 }
 
 /** 카카오 API 일일 한도 초과가 의심될 때 던진다. 상위에서 키 재입력 모달을 띄운다. */
@@ -116,7 +125,7 @@ export class RateLimitExceededError extends Error {
   constructor(
     consecutive: number,
     total: number,
-    partial: TimeMatrixPartial = { times: {}, fallbacks: 0 },
+    partial: TimeMatrixPartial = { times: {}, fallbacks: 0, fallbackKeys: [] },
   ) {
     super(`API 일일 한도 초과 (연속 ${consecutive}건, 누적 ${total}건)`);
     this.name = 'RateLimitExceededError';
@@ -260,6 +269,8 @@ export interface TimeMatrixResult {
   times: Record<string, number>;
   /** API 실패로 Haversine 추정으로 채운 셀 수 */
   fallbacks: number;
+  /** 그 셀들의 키. 재계산할 때 이 칸만 다시 받으면 된다 */
+  fallbackKeys: string[];
   /** `signal`이 abort돼서 일부만 모았으면 true. 호출부는 결과를 버려야 한다 */
   aborted: boolean;
 }
@@ -305,6 +316,7 @@ export async function fetchTimeMatrix(
   } = options;
 
   const times: Record<string, number> = {};
+  const fallbackKeys: string[] = [];
   let fallbacks = 0;
   let done = 0;
 
@@ -318,7 +330,11 @@ export async function fetchTimeMatrix(
     return true;
   });
 
-  const snapshot = (): TimeMatrixPartial => ({ times: { ...times }, fallbacks });
+  const snapshot = (): TimeMatrixPartial => ({
+    times: { ...times },
+    fallbacks,
+    fallbackKeys: [...fallbackKeys],
+  });
 
   const tasks = pending.map((pair) => async () => {
     const sec = await drivingTimeSec(pair.from, pair.to, headers, { signal, sleep });
@@ -332,10 +348,12 @@ export async function fetchTimeMatrix(
         throw new RateLimitExceededError(tracker.consecutive, tracker.total);
       }
       times[pair.key] = haversineEstimateSec(pair.from, pair.to);
+      fallbackKeys.push(pair.key);
       fallbacks += 1;
     } else if (sec === DRIVING_TIME_FAIL) {
       tracker.consecutive = 0;
       times[pair.key] = haversineEstimateSec(pair.from, pair.to);
+      fallbackKeys.push(pair.key);
       fallbacks += 1;
     } else {
       tracker.consecutive = 0;

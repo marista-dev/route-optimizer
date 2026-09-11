@@ -55,7 +55,7 @@ function seedProgress(): void {
   store.setClusters([group(0), group(1)], [cluster(0, [0]), cluster(1, [1])]);
   store.setClusterOrder([0, 1]);
   store.setClusterEntryExit(0, 0, 0);
-  store.setClusterInnerOrder(0, [0], { '0-0': 12 }, 1);
+  store.setClusterInnerOrder(0, [0], { '0-0': 12 }, 1, ['0-0']);
   useSessionStore.setState({ finalOrder: [0, 1] });
 }
 
@@ -106,7 +106,7 @@ describe('세션 스토어 무효화', () => {
     const before = useSessionStore.getState().clusters;
 
     useSessionStore.getState().setClusterEntryExit(1, 1, 1);
-    useSessionStore.getState().setClusterInnerOrder(1, [1], { '1-1': 30 }, 0);
+    useSessionStore.getState().setClusterInnerOrder(1, [1], { '1-1': 30 }, 0, []);
 
     const state = useSessionStore.getState();
     expect(state.clusters).toBe(before);
@@ -116,6 +116,7 @@ describe('세션 스토어 무효화', () => {
       innerOrder: [1],
       timeMatrix: { '1-1': 30 },
       haversineFallbacks: 0,
+      haversineKeys: [],
     });
   });
 
