@@ -1,0 +1,542 @@
+[
+  {
+    "address": "광주 북구 삼정로 7, 207동 403호(두암동, 주공2단지@)",
+    "parseUnit": {
+      "dongNum": 207,
+      "dongTxt": null,
+      "ho": 403
+    },
+    "complexKey": "광주북구삼정로7",
+    "stripUnit": "광주 북구 삼정로 7, (두암동, 주공2단지@)",
+    "unitSortKey": [
+      0,
+      207,
+      "",
+      0,
+      403,
+      0
+    ]
+  },
+  {
+    "address": "광주 북구 안산로 38-3, A동 102호 (오치2동, 영진하우스)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": "A",
+      "ho": 102
+    },
+    "complexKey": "광주북구안산로38-3",
+    "stripUnit": "광주 북구 안산로 38-3, (오치2동, 영진하우스)",
+    "unitSortKey": [
+      1,
+      0,
+      "A",
+      0,
+      102,
+      1
+    ]
+  },
+  {
+    "address": "광주 북구 하백로 46번길 9, 809호(매곡동, 부림@)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": 809
+    },
+    "complexKey": "광주북구하백로46번길9",
+    "stripUnit": "광주 북구 하백로 46번길 9, (매곡동, 부림@)",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      0,
+      809,
+      2
+    ]
+  },
+  {
+    "address": "광주 북구 첨단연신로 250, 112동 1205(신용동,첨단휴먼시아)",
+    "parseUnit": {
+      "dongNum": 112,
+      "dongTxt": null,
+      "ho": 1205
+    },
+    "complexKey": "광주북구첨단연신로250",
+    "stripUnit": "광주 북구 첨단연신로 250, (신용동,첨단휴먼시아)",
+    "unitSortKey": [
+      0,
+      112,
+      "",
+      0,
+      1205,
+      3
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 102동 106호(매곡동,아남@)",
+    "parseUnit": {
+      "dongNum": 102,
+      "dongTxt": null,
+      "ho": 106
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92, (매곡동,아남@)",
+    "unitSortKey": [
+      0,
+      102,
+      "",
+      0,
+      106,
+      4
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 101동 105호(매곡동, 아남@)",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": 105
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92, (매곡동, 아남@)",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      0,
+      105,
+      5
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 제201동 제1504호 (매곡동, 아남@)",
+    "parseUnit": {
+      "dongNum": 201,
+      "dongTxt": null,
+      "ho": 1504
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92, (매곡동, 아남@)",
+    "unitSortKey": [
+      0,
+      201,
+      "",
+      0,
+      1504,
+      6
+    ]
+  },
+  {
+    "address": "광주광역시 북구 매곡로 92 제102동 1504호",
+    "parseUnit": {
+      "dongNum": 102,
+      "dongTxt": null,
+      "ho": 1504
+    },
+    "complexKey": "광주광역시북구매곡로92",
+    "stripUnit": "광주광역시 북구 매곡로 92",
+    "unitSortKey": [
+      0,
+      102,
+      "",
+      0,
+      1504,
+      7
+    ]
+  },
+  {
+    "address": "광주 북구 안산로 40, B동 201호 (오치2동, 대광빌라)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": "B",
+      "ho": 201
+    },
+    "complexKey": "광주북구안산로40",
+    "stripUnit": "광주 북구 안산로 40, (오치2동, 대광빌라)",
+    "unitSortKey": [
+      1,
+      0,
+      "B",
+      0,
+      201,
+      8
+    ]
+  },
+  {
+    "address": "광주 북구 안산로 40, b동 2층 (오치2동, 대광빌라)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": "B",
+      "ho": null
+    },
+    "complexKey": "광주북구안산로40",
+    "stripUnit": "광주 북구 안산로 40, (오치2동, 대광빌라)",
+    "unitSortKey": [
+      1,
+      0,
+      "B",
+      1,
+      0,
+      9
+    ]
+  },
+  {
+    "address": "C동 1501호 광주 북구 설죽로 100",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": "C",
+      "ho": 1501
+    },
+    "complexKey": "광주북구설죽로100",
+    "stripUnit": "광주 북구 설죽로 100",
+    "unitSortKey": [
+      1,
+      0,
+      "C",
+      0,
+      1501,
+      10
+    ]
+  },
+  {
+    "address": "광주 북구 첨단연신로 260, 3층 (신용동, 상가)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구첨단연신로260",
+    "stripUnit": "광주 북구 첨단연신로 260, (신용동, 상가)",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      11
+    ]
+  },
+  {
+    "address": "광주 북구 첨단연신로 260 2 층",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구첨단연신로260",
+    "stripUnit": "광주 북구 첨단연신로 260",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      12
+    ]
+  },
+  {
+    "address": "광주 북구 첨단연신로 260, 101동 3층 1202호",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": 1202
+    },
+    "complexKey": "광주북구첨단연신로260",
+    "stripUnit": "광주 북구 첨단연신로 260",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      0,
+      1202,
+      13
+    ]
+  },
+  {
+    "address": "광주 북구 오치2동 123-4",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구오치2동123-4",
+    "stripUnit": "광주 북구 오치2동 123-4",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      14
+    ]
+  },
+  {
+    "address": "광주 북구 운암1동 45",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구운암1동45",
+    "stripUnit": "광주 북구 운암1동 45",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      15
+    ]
+  },
+  {
+    "address": "광주 북구 문흥1동 대로 55, 1402호",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": 1402
+    },
+    "complexKey": "광주북구문흥1동대로55",
+    "stripUnit": "광주 북구 문흥1동 대로 55",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      0,
+      1402,
+      16
+    ]
+  },
+  {
+    "address": "광주 북구 설죽로 507 호반리젠시빌 101동 1203호",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": 1203
+    },
+    "complexKey": "광주북구설죽로507호반리젠시빌",
+    "stripUnit": "광주 북구 설죽로 507 호반리젠시빌",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      0,
+      1203,
+      17
+    ]
+  },
+  {
+    "address": "광주 북구 설죽로 507 호반리젠시빌",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구설죽로507호반리젠시빌",
+    "stripUnit": "광주 북구 설죽로 507 호반리젠시빌",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      18
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 101동 15번지",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구매곡로9215번지",
+    "stripUnit": "광주 북구 매곡로 92, 15번지",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      1,
+      0,
+      19
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 101동 20-1",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구매곡로92-1",
+    "stripUnit": "광주 북구 매곡로 92, -1",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      1,
+      0,
+      20
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92, 101동 1205",
+    "parseUnit": {
+      "dongNum": 101,
+      "dongTxt": null,
+      "ho": 1205
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92",
+    "unitSortKey": [
+      0,
+      101,
+      "",
+      0,
+      1205,
+      21
+    ]
+  },
+  {
+    "address": "광주 북구 삼정로 7, 202동 406호(두암동,주공2단지@)",
+    "parseUnit": {
+      "dongNum": 202,
+      "dongTxt": null,
+      "ho": 406
+    },
+    "complexKey": "광주북구삼정로7",
+    "stripUnit": "광주 북구 삼정로 7, (두암동,주공2단지@)",
+    "unitSortKey": [
+      0,
+      202,
+      "",
+      0,
+      406,
+      22
+    ]
+  },
+  {
+    "address": "광주 북구 삼정로 7, 206동 311호 (두암동, 주공2단지@)",
+    "parseUnit": {
+      "dongNum": 206,
+      "dongTxt": null,
+      "ho": 311
+    },
+    "complexKey": "광주북구삼정로7",
+    "stripUnit": "광주 북구 삼정로 7, (두암동, 주공2단지@)",
+    "unitSortKey": [
+      0,
+      206,
+      "",
+      0,
+      311,
+      23
+    ]
+  },
+  {
+    "address": "광주 북구 하백로 46번길 9, 제809호",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": 809
+    },
+    "complexKey": "광주북구하백로46번길9",
+    "stripUnit": "광주 북구 하백로 46번길 9",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      0,
+      809,
+      24
+    ]
+  },
+  {
+    "address": "광주 북구 하백로 46번길 9",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구하백로46번길9",
+    "stripUnit": "광주 북구 하백로 46번길 9",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      25
+    ]
+  },
+  {
+    "address": "광주 광산구 임방울대로 825, 1402호 (수완동, 수완대라수@)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": 1402
+    },
+    "complexKey": "광주광산구임방울대로825",
+    "stripUnit": "광주 광산구 임방울대로 825, (수완동, 수완대라수@)",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      0,
+      1402,
+      26
+    ]
+  },
+  {
+    "address": "광주 광산구 임방울대로 825, 1403호 (수완동, 수완대라수@)",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": 1403
+    },
+    "complexKey": "광주광산구임방울대로825",
+    "stripUnit": "광주 광산구 임방울대로 825, (수완동, 수완대라수@)",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      0,
+      1403,
+      27
+    ]
+  },
+  {
+    "address": "광주  북구   매곡로 92 ,  103동  204호 ",
+    "parseUnit": {
+      "dongNum": 103,
+      "dongTxt": null,
+      "ho": 204
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92",
+    "unitSortKey": [
+      0,
+      103,
+      "",
+      0,
+      204,
+      28
+    ]
+  },
+  {
+    "address": "광주 북구 매곡로 92",
+    "parseUnit": {
+      "dongNum": null,
+      "dongTxt": null,
+      "ho": null
+    },
+    "complexKey": "광주북구매곡로92",
+    "stripUnit": "광주 북구 매곡로 92",
+    "unitSortKey": [
+      2,
+      0,
+      "",
+      1,
+      0,
+      29
+    ]
+  }
+]
