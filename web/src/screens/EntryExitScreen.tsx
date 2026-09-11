@@ -187,6 +187,16 @@ export function EntryExitScreen() {
     [groups, prevExitGroupId, origin, prevClusterId],
   );
   const nextCluster = nextClusterId === undefined ? undefined : clusterById.get(nextClusterId);
+  const nextEntryGroupId =
+    nextClusterId === undefined ? undefined : clusterPicks[nextClusterId]?.entry;
+  /*
+   * 다음 클러스터의 기준점. 진입 지점을 이미 골라 뒀으면 중심이 아니라 그 지점을 쓴다 —
+   * 실제로 차가 향하는 곳이 거기라, 이탈 지점을 그쪽에 가깝게 고르는 판단이 맞아진다.
+   */
+  const nextPoint = useMemo<LatLng | null>(
+    () => latLngOf(groups, nextEntryGroupId) ?? nextCluster?.centroid ?? null,
+    [groups, nextEntryGroupId, nextCluster],
+  );
 
   const applySuggestion = () => {
     if (!current) return;
@@ -194,7 +204,7 @@ export function EntryExitScreen() {
       current,
       groups,
       prevExitPoint,
-      nextCluster?.centroid ?? null,
+      nextPoint,
     );
     if (suggestion) setSelection(suggestion);
   };
@@ -299,16 +309,19 @@ export function EntryExitScreen() {
             : `이전 위치 · ${labelOf(prevExitGroupId)}`,
       });
     }
-    if (nextCluster) {
+    if (nextPoint) {
       points.push({
         id: 'next',
-        at: nextCluster.centroid,
+        at: nextPoint,
         kind: 'next',
-        label: `다음 · 클러스터 ${nextCluster.id + 1}`,
+        label:
+          nextEntryGroupId === undefined
+            ? '다음 클러스터'
+            : `다음 진입 · ${labelOf(nextEntryGroupId)}`,
       });
     }
     return points;
-  }, [prevExitPoint, prevExitGroupId, nextCluster, labelOf]);
+  }, [prevExitPoint, prevExitGroupId, nextPoint, nextEntryGroupId, labelOf]);
   // 이웃 참고점까지 한 화면에 들어와야 어디서 들어오고 어디로 나가는지 판단이 된다.
   const fitPoints = useMemo<LatLng[]>(
     () => [...(current?.hull ?? []), ...refPoints.map((p) => p.at)],
@@ -347,6 +360,19 @@ export function EntryExitScreen() {
     if (!g) return [];
     return [[prevExitPoint, { lat: g.lat, lon: g.lon }]];
   }, [prevExitPoint, selection.entry, groupById]);
+
+  /**
+   * 방금 고른 이탈 건물 → 다음 클러스터를 잇는 확인선.
+   * 진입선과 짝이 되는 선이다. 들어오는 길만 보이고 나가는 길이 안 보이면
+   * 이탈을 반대편에 찍어 놓고도 모른 채 확정하게 된다.
+   * 색은 다음 클러스터 다각형과 같은 빨강으로 맞춰 어디로 나가는지 바로 읽히게 했다.
+   */
+  const exitLinkPath = useMemo<LatLng[][]>(() => {
+    if (!nextPoint || selection.exit === undefined) return [];
+    const g = groupById.get(selection.exit);
+    if (!g) return [];
+    return [[{ lat: g.lat, lon: g.lon }, nextPoint]];
+  }, [nextPoint, selection.exit, groupById]);
 
   const donePaths = useMemo(
     () =>
@@ -394,6 +420,7 @@ export function EntryExitScreen() {
           />
           <RouteLayer paths={donePaths} style="solid" color="#16A34A" />
           <RouteLayer paths={entryLinkPath} style="dashed" color="#16A34A" />
+          <RouteLayer paths={exitLinkPath} style="dashed" color="#DC2626" />
           <RouteLayer paths={currentPath} style="solid" />
           <RefPointLayer points={refPoints} />
           <MarkerLayer
@@ -561,7 +588,7 @@ export function EntryExitScreen() {
                 ? origin
                   ? '출발지에서 시작'
                   : '없음'
-                : `클러스터 ${prevClusterId + 1} · ${
+                : `${index}번째 · ${
                     prevExitGroupId === undefined ? '미지정' : labelOf(prevExitGroupId)
                   }`}
             </span>
@@ -571,14 +598,16 @@ export function EntryExitScreen() {
             <span className="ro-neighbor__text">
               {nextClusterId === undefined
                 ? '마지막 클러스터'
-                : `클러스터 ${nextClusterId + 1}`}
+                : nextEntryGroupId === undefined
+                  ? `${index + 2}번째`
+                  : `${index + 2}번째 · ${labelOf(nextEntryGroupId)}`}
             </span>
           </div>
         </div>
 
         <p className="ro-hint ro-hint--small" style={{ padding: '0 18px 12px' }}>
-          제안: 진입 = 이전 위치와 가장 가까운 지점, 이탈 = 다음 클러스터 중심과 가장 가까운
-          지점. 이름은 주소에서 뽑은 지점명입니다.
+          제안: 진입 = 이전 위치와 가장 가까운 지점, 이탈 = 다음 클러스터와 가장 가까운 지점.
+          고르면 이전 위치에서 진입까지 초록 점선, 이탈에서 다음까지 빨강 점선이 그어집니다.
         </p>
 
         <div className="ro-memberlist">
