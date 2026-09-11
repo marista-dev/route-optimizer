@@ -1,4 +1,5 @@
 import { STEP_LABELS } from './steps';
+import { Check } from 'lucide-react';
 import type { Step } from '../types';
 
 export interface StepperProps {
@@ -25,7 +26,9 @@ export function Stepper({ current, onGo }: StepperProps) {
               aria-current={isCurrent ? 'step' : undefined}
               onClick={() => onGo(n)}
             >
-              <span className="ro-step__dot">{done ? '✓' : n}</span>
+              <span className="ro-step__dot">
+                {done ? <Check size={13} strokeWidth={3} /> : n}
+              </span>
               <span>{label}</span>
             </button>
             {n < 6 ? <div className="ro-stepper__line" /> : null}

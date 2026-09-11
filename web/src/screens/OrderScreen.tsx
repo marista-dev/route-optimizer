@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
 
 import { MapFit, SidePanel } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
@@ -146,7 +147,14 @@ export function OrderScreen() {
               disabled={clusters.length === 0}
               onClick={() => (allAssigned ? setStep(5) : showUnassigned())}
             >
-              {allAssigned ? '진입·이탈 지점 →' : `미지정 ${remain}개 — 위치 보기`}
+              {allAssigned ? (
+                <>
+                  진입·이탈 지점
+                  <ArrowRight size={18} />
+                </>
+              ) : (
+                `미지정 ${remain}개 — 위치 보기`
+              )}
             </button>
           </>
         }
@@ -187,7 +195,7 @@ export function OrderScreen() {
                   disabled={i === 0}
                   onClick={() => move(i, i - 1)}
                 >
-                  ▲
+                  <ChevronUp size={15} />
                 </button>
                 <button
                   type="button"
@@ -196,7 +204,7 @@ export function OrderScreen() {
                   disabled={i === clusterOrder.length - 1}
                   onClick={() => move(i, i + 1)}
                 >
-                  ▼
+                  <ChevronDown size={15} />
                 </button>
               </span>
             </div>

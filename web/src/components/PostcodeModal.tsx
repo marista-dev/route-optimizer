@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { X } from 'lucide-react';
 
 import { Modal } from './Modal';
 import { buildPostcodeAddress } from '../screens/helpers';
@@ -79,7 +80,7 @@ export function PostcodeModal({ title, subtitle, onSelect, onClose }: PostcodeMo
           {subtitle ? <div className="ro-modal__sub">{subtitle}</div> : null}
         </div>
         <button type="button" className="ro-modal__x" aria-label="닫기" onClick={onClose}>
-          ×
+          <X size={18} />
         </button>
       </div>
       {/* 오류 문구는 host 바깥 형제 노드에 둔다. host는 우편번호 iframe이 직접 쓰는 자리라

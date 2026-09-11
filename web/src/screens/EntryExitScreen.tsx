@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 
 import { RateLimitExceededError, RateLimitTracker, fetchTimeMatrix } from '../api';
 import type { TimePair } from '../api';
@@ -511,7 +512,8 @@ export function EntryExitScreen() {
                 className="ro-btn ro-btn--md ro-btn--dark ro-btn--block"
                 onClick={finish}
               >
-                결과 보기 →
+                결과 보기
+                <ArrowRight size={18} />
               </button>
             ) : null}
           </>

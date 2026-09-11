@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { X } from 'lucide-react';
 
 import { useToastStore } from '../store/toast';
 
@@ -19,7 +20,7 @@ export function Toast() {
     <div className={`ro-toast${kind === 'error' ? ' is-error' : ''}`} role="alert">
       <span>{message}</span>
       <button type="button" className="ro-toast__x" aria-label="닫기" onClick={clear}>
-        ×
+        <X size={16} />
       </button>
     </div>
   );

@@ -41,7 +41,7 @@
   --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.3);
 
   font-family: 'Noto Sans KR', system-ui, 'Apple SD Gothic Neo', sans-serif;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.5;
   color: var(--text);
   color-scheme: light;
@@ -136,20 +136,15 @@ input::placeholder {
 }
 
 .ro-brand__logo {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius);
-  background: var(--primary);
-  color: #fff;
-  font-weight: 700;
-  font-size: 12px;
-  display: grid;
-  place-items: center;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .ro-brand__name {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .ro-stepper {
@@ -177,7 +172,7 @@ input::placeholder {
   border: 0;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--faint);
   cursor: default;
@@ -191,7 +186,7 @@ input::placeholder {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
   background: #fff;
   color: var(--faint);
@@ -236,7 +231,7 @@ input::placeholder {
   border-radius: 999px;
   background: #f3f4f6;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -263,7 +258,7 @@ input::placeholder {
   background: var(--surface);
   color: var(--text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 15px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -327,7 +322,13 @@ input::placeholder {
 .ro-btn--lg {
   height: 40px;
   padding: 0 20px;
-  font-size: 14px;
+  font-size: 16px;
+}
+.ro-btn--xl {
+  height: 52px;
+  padding: 0 44px;
+  font-size: 20px;
+  font-weight: 600;
 }
 .ro-btn--md {
   height: 38px;
@@ -335,12 +336,12 @@ input::placeholder {
 .ro-btn--sm {
   height: 32px;
   padding: 0 12px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .ro-btn--xs {
   height: 26px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: 14px;
   border-radius: 5px;
 }
 .ro-btn--block {
@@ -361,7 +362,7 @@ input::placeholder {
   border-radius: var(--radius);
   padding: 0 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 15px;
   outline: none;
   background: #fff;
   color: var(--text);
@@ -376,7 +377,7 @@ input::placeholder {
   gap: 6px;
 }
 .ro-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
 }
 .ro-range {
@@ -386,7 +387,7 @@ input::placeholder {
 .ro-range-scale {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--faint);
 }
 
@@ -407,10 +408,10 @@ input::placeholder {
 }
 .ro-card__title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
 }
 .ro-card__note {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 
@@ -439,7 +440,7 @@ input::placeholder {
 }
 .ro-panel__title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
 }
 .ro-panel__titlerow {
   display: flex;
@@ -486,11 +487,11 @@ input::placeholder {
   padding: 10px;
 }
 .ro-stat__label {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 .ro-stat__value {
-  font-size: 20px;
+  font-size: 23px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -498,7 +499,7 @@ input::placeholder {
 .ro-legend {
   display: flex;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--muted);
   padding-top: 8px;
   border-top: 1px solid var(--border-soft);
@@ -526,12 +527,12 @@ input::placeholder {
 }
 
 .ro-hint {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   line-height: 1.5;
 }
 .ro-hint--small {
-  font-size: 11.5px;
+  font-size: 13px;
 }
 
 /* ── 진행률 ────────────────────────────────────────────────────────────── */
@@ -545,7 +546,7 @@ input::placeholder {
 .ro-progress__head {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 14px;
   gap: 8px;
 }
 .ro-progress__label {
@@ -577,7 +578,7 @@ input::placeholder {
 .ro-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 14.5px;
   background: var(--surface);
 }
 .ro-table th {
@@ -621,12 +622,12 @@ input::placeholder {
   padding: 28px 12px;
   text-align: center;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 14px;
 }
 .ro-table__pending {
   padding: 10px;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 14px;
   animation: ro-pulse 1.2s infinite;
 }
 
@@ -636,7 +637,7 @@ input::placeholder {
   gap: 5px;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 11.5px;
+  font-size: 13px;
   font-weight: 500;
 }
 .ro-badge__dot {
@@ -674,11 +675,15 @@ input::placeholder {
   background: var(--surface);
   color: var(--muted);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.ro-filter:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .ro-filter.is-on {
   background: var(--text);
@@ -686,7 +691,7 @@ input::placeholder {
   color: #fff;
 }
 .ro-filter__count {
-  font-size: 11px;
+  font-size: 12.5px;
   opacity: 0.7;
 }
 
@@ -726,17 +731,18 @@ input::placeholder {
 }
 .ro-modal__title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
 }
 .ro-modal__sub {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .ro-modal__x {
   border: 0;
   background: none;
-  font-size: 18px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
   color: var(--faint);
   line-height: 1;
 }
@@ -746,7 +752,7 @@ input::placeholder {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .ro-postcode {
@@ -768,15 +774,15 @@ input::placeholder {
   display: grid;
   place-items: center;
   font-weight: 700;
-  font-size: 16px;
+  font-size: 18.5px;
   flex: none;
 }
 .ro-alert__title {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 17.5px;
 }
 .ro-alert__body {
-  font-size: 12.5px;
+  font-size: 14.5px;
   color: var(--muted);
   line-height: 1.5;
 }
@@ -784,7 +790,7 @@ input::placeholder {
   background: var(--surface-2);
   border-radius: var(--radius);
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   display: flex;
   justify-content: space-between;
@@ -806,7 +812,7 @@ input::placeholder {
   border-radius: var(--radius-lg);
   background: var(--text);
   color: #fff;
-  font-size: 13px;
+  font-size: 15px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
 }
 .ro-toast.is-error {
@@ -816,8 +822,9 @@ input::placeholder {
   border: 0;
   background: none;
   color: inherit;
-  font-size: 16px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
   line-height: 1;
 }
 
@@ -855,11 +862,11 @@ input::placeholder {
 }
 .ro-banner__title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
 }
 .ro-banner__sub {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 .ro-readout {
   flex: 1;
@@ -881,13 +888,13 @@ input::placeholder {
   flex: none;
 }
 .ro-readout__text {
-  font-size: 13px;
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ro-confirm {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--success);
   display: flex;
   gap: 6px;
@@ -914,7 +921,7 @@ input::placeholder {
   background: var(--primary-tint-2);
 }
 .ro-drop__title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
 }
 .ro-filebar {
@@ -940,7 +947,7 @@ input::placeholder {
   border-radius: var(--radius);
   background: var(--primary);
   color: #fff;
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 700;
   display: grid;
   place-items: center;
@@ -951,7 +958,7 @@ input::placeholder {
   min-width: 0;
 }
 .ro-filebar__cell dt {
-  font-size: 11px;
+  font-size: 12.5px;
   color: var(--muted);
   margin: 0;
 }
@@ -965,14 +972,27 @@ input::placeholder {
 .ro-s1__foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 24px;
   padding-top: 4px;
 }
-.ro-s1__privacy {
-  font-size: 12px;
+
+/* REST 키 확인 결과 — 입력 칸 바로 아래 한 줄. */
+.ro-keystate {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+.ro-keystate.is-checking {
   color: var(--muted);
-  max-width: 640px;
+}
+.ro-keystate.is-ok {
+  color: var(--success-fg);
+}
+.ro-keystate.is-invalid {
+  color: var(--danger);
+}
+.ro-keystate.is-unknown {
+  color: var(--warn);
 }
 
 /* ── S2 ────────────────────────────────────────────────────────────────── */
@@ -1004,7 +1024,7 @@ input::placeholder {
   color: var(--success-fg);
   display: flex;
   align-items: center;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -1055,7 +1075,7 @@ input::placeholder {
   border: 0;
   background: none;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--muted);
 }
 .ro-pill__nav:hover:enabled {
@@ -1067,7 +1087,7 @@ input::placeholder {
 }
 .ro-pill__text {
   padding: 0 6px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1139,7 +1159,7 @@ input::placeholder {
 }
 .ro-orderitem__handle {
   color: var(--border-strong);
-  font-size: 14px;
+  font-size: 16px;
   letter-spacing: -2px;
 }
 .ro-orderitem__no {
@@ -1149,17 +1169,17 @@ input::placeholder {
   background: var(--primary);
   color: #fff;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
   display: grid;
   place-items: center;
   flex: none;
 }
 .ro-orderitem__name {
   flex: 1;
-  font-size: 13px;
+  font-size: 15px;
 }
 .ro-orderitem__count {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .ro-orderitem__move {
@@ -1167,9 +1187,9 @@ input::placeholder {
   background: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 12px;
   padding: 2px 3px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
 }
 .ro-orderitem__move:disabled {
   opacity: 0.3;
@@ -1202,7 +1222,7 @@ input::placeholder {
   background: #fef2f2;
 }
 .ro-ee__tag {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
   display: flex;
   gap: 5px;
@@ -1221,7 +1241,7 @@ input::placeholder {
   background: currentColor;
 }
 .ro-ee__name {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1267,13 +1287,13 @@ input::placeholder {
 }
 .ro-member__name {
   flex: 1;
-  font-size: 12.5px;
+  font-size: 14.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ro-member__role {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
 }
 .ro-member__role.is-entry {
@@ -1285,7 +1305,7 @@ input::placeholder {
 .ro-calls {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   gap: 8px;
 }
@@ -1326,15 +1346,11 @@ input::placeholder {
   background: transparent;
   color: var(--faint);
 }
-.ro-btn__ico {
-  font-size: 14px;
-  line-height: 1;
-}
 .ro-s6__notes {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11.5px;
+  font-size: 13px;
   color: var(--muted);
 }
 .ro-s6__foot {
@@ -1357,14 +1373,14 @@ input::placeholder {
 /* 카카오 InfoWindow 안에 넣는 멤버 목록. */
 .ro-info {
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--muted);
   max-width: 260px;
 }
 .ro-info b {
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 14.5px;
 }
 
 /* ── 배지 안 숫자·기호의 세로 정렬 ──────────────────────────────────────────
@@ -1373,7 +1389,6 @@ input::placeholder {
  * 좁은 상자에서는 이 차이가 "숫자가 아래로 쏠린" 것으로 보인다.
  * 숫자는 메트릭이 대칭인 시스템 폰트로 그리고 line-height를 1로 고정한다.
  * ───────────────────────────────────────────────────────────────────────── */
-.ro-brand__logo,
 .ro-step__dot,
 .ro-alert__icon,
 .ro-filebar__icon,
@@ -1401,7 +1416,7 @@ input::placeholder {
   padding: 1px 6px;
   border-radius: 9px;
   border: 1px solid transparent;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 16px;
 }
@@ -1415,7 +1430,7 @@ input::placeholder {
 }
 .ro-neighbor__text {
   flex: 1;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1507,7 +1522,7 @@ input::placeholder {
   border-radius: var(--radius);
   background: var(--success-bg);
   color: var(--success-fg);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 500;
 }
 .ro-autodone::before {
@@ -1538,7 +1553,7 @@ input::placeholder {
 }
 .ro-td--grip {
   color: var(--border-strong);
-  font-size: 13px;
+  font-size: 15px;
   letter-spacing: -2px;
   cursor: grab;
   user-select: none;
