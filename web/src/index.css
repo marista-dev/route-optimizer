@@ -357,12 +357,12 @@ input::placeholder {
 
 /* ── 폼 ────────────────────────────────────────────────────────────────── */
 .ro-input {
-  height: 36px;
+  height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0 10px;
+  padding: 0 14px;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 17px;
   outline: none;
   background: #fff;
   color: var(--text);
@@ -396,10 +396,10 @@ input::placeholder {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 28px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 18px;
 }
 .ro-card__head {
   display: flex;
@@ -408,7 +408,7 @@ input::placeholder {
 }
 .ro-card__title {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 20px;
 }
 .ro-card__note {
   font-size: 12.5px;
@@ -833,21 +833,22 @@ input::placeholder {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 36px 0 40px;
+  padding: 48px 0 56px;
 }
 .ro-s1 {
   width: 100%;
-  max-width: 920px;
+  /* 27인치(2560px) 기준으로 가운데를 채우되, 한 줄이 너무 길어지지 않는 선. */
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 0 20px;
+  padding: 0 40px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
 }
 .ro-s1__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 24px;
 }
 .ro-banner {
   display: flex;
@@ -858,7 +859,7 @@ input::placeholder {
   border: 1px solid var(--primary-line);
   border-left: 4px solid var(--primary);
   border-radius: var(--radius-lg);
-  padding: 14px 18px;
+  padding: 20px 24px;
 }
 .ro-banner__title {
   font-weight: 700;
@@ -870,10 +871,10 @@ input::placeholder {
 }
 .ro-readout {
   flex: 1;
-  height: 36px;
+  height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0 10px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -901,7 +902,7 @@ input::placeholder {
   align-items: center;
 }
 .ro-drop {
-  height: 120px;
+  height: 180px;
   width: 100%;
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
@@ -921,7 +922,7 @@ input::placeholder {
   background: var(--primary-tint-2);
 }
 .ro-drop__title {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 500;
 }
 .ro-filebar {
@@ -933,7 +934,7 @@ input::placeholder {
   align-items: center;
 }
 .ro-filebar__name {
-  padding: 12px 16px;
+  padding: 18px 20px;
   background: var(--surface-2);
   border-right: 1px solid var(--border);
   display: flex;
@@ -993,6 +994,24 @@ input::placeholder {
 }
 .ro-keystate.is-unknown {
   color: var(--warn);
+}
+
+/* 시작 화면은 입력 칸이 커진 만큼 옆에 붙는 버튼도 같이 키운다. */
+.ro-s1 .ro-btn {
+  height: 44px;
+  padding: 0 18px;
+  font-size: 16px;
+}
+.ro-s1 .ro-btn--xl {
+  height: 56px;
+  padding: 0 48px;
+  font-size: 22px;
+}
+.ro-s1 .ro-btn--sm,
+.ro-s1 .ro-btn--xs {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 14px;
 }
 
 /* ── S2 ────────────────────────────────────────────────────────────────── */
