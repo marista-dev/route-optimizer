@@ -1368,9 +1368,14 @@ input::placeholder {
 .ro-s6__notes {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 13px;
   color: var(--muted);
+}
+/* 경고도 재업로드도 없으면 이 줄은 통째로 없는 셈이 되어야 한다. */
+.ro-s6__notes:empty {
+  display: none;
 }
 .ro-s6__foot {
   display: flex;

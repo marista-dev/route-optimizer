@@ -432,15 +432,15 @@ export function ResultScreen() {
               <>
                 <span className="ro-faint ro-hint--small">순서 편집 중 · 행을 끌거나 위·아래 버튼으로 이동</span>
                 <span className="ro-row">
-                  <button type="button" className="ro-btn ro-btn--xs" onClick={revertToComputed}>
+                  <button type="button" className="ro-btn ro-btn--sm" onClick={revertToComputed}>
                     되돌리기
                   </button>
-                  <button type="button" className="ro-btn ro-btn--xs" onClick={cancelEdit}>
+                  <button type="button" className="ro-btn ro-btn--sm" onClick={cancelEdit}>
                     취소
                   </button>
                   <button
                     type="button"
-                    className="ro-btn ro-btn--xs ro-btn--primary"
+                    className="ro-btn ro-btn--sm ro-btn--primary"
                     onClick={applyEdit}
                   >
                     적용
@@ -451,7 +451,7 @@ export function ResultScreen() {
               <>
                 <button
                   type="button"
-                  className="ro-btn ro-btn--xs"
+                  className="ro-btn ro-btn--md ro-btn--grow"
                   disabled={finalOrder.length === 0}
                   onClick={startEdit}
                 >
@@ -461,29 +461,20 @@ export function ResultScreen() {
             )}
           </div>
           <div className="ro-s6__notes">
-            <div>
-              · xlsx는 원본에 '배송순서' 열이 있으면 그 열에 쓰고, 없으면 1열에 새로 넣은 뒤 행을
-              순서대로 정렬합니다. 셀 색·테두리 서식은 유지되지 않습니다.
-            </div>
-            {editing ? (
-              <div className="ro-warn-text">· 편집 중에는 다운로드가 잠깁니다. "적용"을 누르세요.</div>
-            ) : null}
             {warnCount > 0 ? (
               <div className="ro-warn-text">
                 · 주소가 다른 채로 둔 {warnCount}건 포함
               </div>
             ) : null}
             {!hasBuffer ? (
-              <div className="ro-faint ro-hint--small">
-                · 원본 파일이 없어 xlsx는 서식 없이 새로 만듭니다.{' '}
-                <button
-                  type="button"
-                  className="ro-btn ro-btn--xs"
-                  onClick={() => reuploadRef.current?.click()}
-                >
-                  원본 다시 올리기
-                </button>
-              </div>
+              <button
+                type="button"
+                className="ro-btn ro-btn--sm"
+                title="원본 파일을 다시 올리면 xlsx가 원본 서식을 그대로 씁니다"
+                onClick={() => reuploadRef.current?.click()}
+              >
+                원본 다시 올리기
+              </button>
             ) : null}
             </div>
           </>
