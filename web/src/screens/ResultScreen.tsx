@@ -60,8 +60,6 @@ export function ResultScreen() {
   const reuploadRef = useRef<HTMLInputElement>(null);
   // 개인정보가 담긴 세션은 빨리 비우는 게 좋지만(계획 12절), 대부분 CSV와 xlsx를
   // 둘 다 받는다. 기본으로 켜 두면 첫 다운로드가 두 번째를 불가능하게 만든다 →
-  // 기본은 끔. 다 끝냈으면 아래 "처음부터 (세션 삭제)"로 명시적으로 지운다.
-  const [clearAfterDownload, setClearAfterDownload] = useState(false);
 
   // ── 순서 편집 ──────────────────────────────────────────────────────────────
   // 편집 중에는 draft가 화면(표·지도·순번)의 기준이고, "적용"을 눌러야 스토어에 들어간다.
@@ -229,7 +227,7 @@ export function ResultScreen() {
     showInfo('편집한 순서를 적용했습니다. 다운로드에도 이 순서가 들어갑니다.');
   };
 
-  /** 세션 비우기(다운로드 직후 또는 "처음부터"). */
+  /** 세션 비우기("처음부터"). */
   const clearSession = useCallback(() => {
     setEditing(false);
     setDraft([]);
@@ -238,22 +236,13 @@ export function ResultScreen() {
     setBuffer(null);
   }, [reset, setBuffer]);
 
-  /** 내려받기가 끝나면 체크 상태에 따라 세션을 지운다. */
-  const afterDownload = () => {
-    if (!clearAfterDownload) return;
-    clearSession();
-    showInfo('내려받은 뒤 세션을 삭제했습니다.');
-  };
-
-  /** blob 만들기 → 내려받기 → `afterDownload()` 순서를 표준화한다. 만들기가 실패하면 fail 메시지만 보여준다. */
+  /** blob 만들기 → 내려받기. 만들기가 실패하면 fail 메시지만 보여준다. */
   const download = (make: () => Blob, ext: 'csv' | 'xlsx', fail: string) => {
     try {
       downloadBlob(make(), outputFileName(fileName, ext));
     } catch (err) {
       showApiError(err, fail);
-      return;
     }
-    afterDownload();
   };
 
   const downloadCsv = () =>
@@ -311,7 +300,8 @@ export function ResultScreen() {
     ];
     if (!editing) return base;
     return [
-      ...base,
+      // 끌 수 있다는 표시는 줄이 시작하는 자리에 있어야 한다. 순서·이름 뒤에 두면
+      // 무엇을 잡으라는 표시인지 눈에 들어오지 않는다.
       {
         key: 'grip',
         header: '',
@@ -323,6 +313,7 @@ export function ResultScreen() {
           </span>
         ),
       },
+      ...base,
       {
         key: 'move',
         header: '이동',
@@ -387,14 +378,6 @@ export function ResultScreen() {
         bodyRef={listRef}
         footer={
           <div className="ro-s6__foot">
-            <label className="ro-faint ro-hint--small ro-row ro-row--center">
-              <input
-                type="checkbox"
-                checked={clearAfterDownload}
-                onChange={(e) => setClearAfterDownload(e.target.checked)}
-              />
-              다운로드 후 세션 삭제
-            </label>
             <button
               type="button"
               className="ro-btn ro-btn--sm ro-btn--danger"

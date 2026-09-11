@@ -1379,7 +1379,7 @@ input::placeholder {
 }
 .ro-s6__foot {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
@@ -1577,10 +1577,9 @@ input::placeholder {
 }
 .ro-td--grip {
   color: var(--border-strong);
-  font-size: 15px;
-  letter-spacing: -2px;
   cursor: grab;
   user-select: none;
+  padding-right: 0;
 }
 
 /* 지도에서 누른 배송지 — 마우스가 떠나도 표에서 계속 보이게 남긴다. */
