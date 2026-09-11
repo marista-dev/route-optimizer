@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 
-import { KakaoAuthError, geocode, isPoolAborted, reverseGeocode, runPool } from '../api';
+import {
+  KakaoAuthError,
+  geocode,
+  isPoolAborted,
+  probeRestKey,
+  reverseGeocode,
+  runPool,
+} from '../api';
 import { verifyAddress } from '../core';
 import { DataTable, PostcodeModal, ProgressBar, VerdictBadge } from '../components';
 import type { Column } from '../components';
 import { kakaoHeaders, useSessionStore } from '../store/session';
 import { showError } from '../store/toast';
-import type { KakaoHeaders, Node, Verdict } from '../types';
+import { VERDICT_HELP, VERDICT_LABEL, type Node, type Verdict } from '../types';
 import {
   ALL_VERDICTS,
   VERDICTS,
@@ -26,28 +34,6 @@ const CONCURRENCY = 3;
  * 많이 소모할 수 있는 규모부터만 확인한다. 적은 건수는 매번 물으면 성가시기만 하다.
  */
 const RESTART_CONFIRM_THRESHOLD = 50;
-
-/**
- * 키가 유효한지 한 번만 찔러본다.
- *
- * `geocode`는 401을 조용히 넘기고 null을 돌려주므로 잘못된 키와 "주소를 못 찾음"을
- * 구분할 수 없다. 그래서 여기서만 로컬 API를 직접 호출해 상태 코드를 본다.
- */
-async function probeRestKey(
-  headers: KakaoHeaders,
-  signal: AbortSignal,
-): Promise<'ok' | 'invalid' | 'unknown'> {
-  try {
-    const resp = await fetch(
-      'https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent('서울특별시'),
-      { headers, signal },
-    );
-    if (resp.status === 401) return 'invalid';
-    return resp.status === 200 ? 'ok' : 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
 
 /** S2 지오코딩 · 검증. */
 export function GeocodeScreen() {
@@ -76,10 +62,26 @@ export function GeocodeScreen() {
   const missingCount = counts['위치없음'] ?? 0;
   const needCount = counts['요확인'] ?? 0;
 
+  /*
+   * 주소를 고치면 그 행의 판정이 '직접 수정'으로 바뀐다. 마지막 한 건을 고치는 순간
+   * 보고 있던 필터의 대상이 0건이 되어 빈 표만 남으므로, 그때는 전체를 보여 준다.
+   * 고른 값(filter)은 그대로 두고 보이는 값만 바꾼다 — 렌더 중에 상태를 되돌리면
+   * 렌더가 한 번 더 돈다.
+   */
+  const activeFilter =
+    filter !== ALL_VERDICTS && (counts[filter] ?? 0) === 0 ? ALL_VERDICTS : filter;
+
   const visible = useMemo(
-    () => (filter === ALL_VERDICTS ? nodes : nodes.filter((n) => n.verdict === filter)),
-    [nodes, filter],
+    () => (activeFilter === ALL_VERDICTS ? nodes : nodes.filter((n) => n.verdict === activeFilter)),
+    [nodes, activeFilter],
   );
+
+  const emptyMessage =
+    nodes.length === 0
+      ? '아직 조회한 주소가 없습니다'
+      : activeFilter === ALL_VERDICTS
+        ? '표시할 행이 없습니다'
+        : `'${VERDICT_LABEL[activeFilter]}'에 해당하는 행이 없습니다`;
 
   const abort = useCallback(() => controllerRef.current?.abort(), []);
 
@@ -216,7 +218,7 @@ export function GeocodeScreen() {
     if (
       total > RESTART_CONFIRM_THRESHOLD &&
       !window.confirm(
-        `주소 ${total}건을 처음부터 다시 조회합니다. 지오코딩과 역지오코딩까지 API를 약 ${
+        `주소 ${total}건을 처음부터 다시 조회합니다. 좌표 찾기와 주소 대조까지 API를 약 ${
           total * 2
         }회 호출합니다. 계속할까요?`,
       )
@@ -230,21 +232,30 @@ export function GeocodeScreen() {
   const columns: Column<Node>[] = [
     { key: 'idx', header: '#', width: 44, className: 'ro-td--idx', cell: (n) => n.id + 1 },
     { key: 'name', header: '이름', width: 80, className: 'ro-td--name', cell: (n) => n.name },
-    { key: 'addr', header: '원본 주소', cell: (n) => n.address },
-    { key: 'kakao', header: '카카오 확인주소', className: 'ro-muted', cell: (n) => n.kakaoAddr || '—' },
-    { key: 'rev', header: '역지오코딩', className: 'ro-muted', cell: (n) => n.reverseAddr || '—' },
-    { key: 'verdict', header: '판정', width: 96, cell: (n) => <VerdictBadge verdict={n.verdict} /> },
+    { key: 'addr', header: '입력한 주소', cell: (n) => n.address },
+    {
+      key: 'rev',
+      header: '찾은 위치의 주소',
+      className: 'ro-muted',
+      cell: (n) => n.reverseAddr || '—',
+    },
+    { key: 'verdict', header: '판정', width: 116, cell: (n) => <VerdictBadge verdict={n.verdict} /> },
     {
       key: 'fix',
       header: '',
       width: 72,
       right: true,
-      cell: (n) =>
-        isFixable(n.verdict) ? (
-          <button type="button" className="ro-btn ro-btn--xs" onClick={() => setFixing(n)}>
-            수정
-          </button>
-        ) : null,
+      // 판정이 '일치'라도 사람 눈에는 틀릴 수 있다. 최종 판단은 사용자 몫이라 모든 행에 연다.
+      cell: (n) => (
+        <button
+          type="button"
+          className={`ro-btn ro-btn--xs${isFixable(n.verdict) ? ' ro-btn--primary' : ''}`}
+          title="주소 찾기 창에서 올바른 주소를 고릅니다"
+          onClick={() => setFixing(n)}
+        >
+          주소 수정
+        </button>
+      ),
     },
   ];
 
@@ -253,13 +264,13 @@ export function GeocodeScreen() {
       <div className="ro-s2__bar">
         <div className="ro-s2__progress">
           <ProgressBar
-            label="2단계 · 지오코딩 (주소 → 좌표)"
+            label="주소로 좌표 찾기"
             done={geoDone}
             total={total}
             detail={`${geoDone} / ${total} · 동시 ${CONCURRENCY}`}
           />
           <ProgressBar
-            label="3단계 · 역지오코딩 검증"
+            label="찾은 좌표의 주소로 대조"
             done={revDone}
             total={total}
             tone="muted"
@@ -283,17 +294,24 @@ export function GeocodeScreen() {
 
         <div className="ro-s2__tools">
           <div className="ro-s2__filters">
-            {[ALL_VERDICTS, ...VERDICTS].map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={`ro-filter${filter === name ? ' is-on' : ''}`}
-                onClick={() => setFilter(name)}
-              >
-                {name}
-                <span className="ro-filter__count">{counts[name] ?? 0}</span>
-              </button>
-            ))}
+            {[ALL_VERDICTS, ...VERDICTS].map((name) => {
+              const count = counts[name] ?? 0;
+              const isAll = name === ALL_VERDICTS;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  className={`ro-filter${activeFilter === name ? ' is-on' : ''}`}
+                  // 0건짜리 필터를 고르면 빈 표만 남는다. 아예 못 고르게 막는다.
+                  disabled={!isAll && count === 0}
+                  title={isAll ? '모든 행을 봅니다' : VERDICT_HELP[name]}
+                  onClick={() => setFilter(name)}
+                >
+                  {isAll ? '전체' : VERDICT_LABEL[name]}
+                  <span className="ro-filter__count">{count}</span>
+                </button>
+              );
+            })}
           </div>
           <div className="ro-row ro-row--center">
             {needCount > 0 && !acknowledged ? (
@@ -302,7 +320,7 @@ export function GeocodeScreen() {
                 className="ro-btn ro-btn--sm"
                 onClick={() => setAcknowledged(true)}
               >
-                요확인 {needCount}건 원본 그대로
+                주소 다름 {needCount}건 그대로 두기
               </button>
             ) : null}
             <button
@@ -311,9 +329,10 @@ export function GeocodeScreen() {
               disabled={!done}
               onClick={() => setStep(3)}
             >
-              클러스터링 →{' '}
+              클러스터링
+              <ArrowRight size={18} />{' '}
               <span className="ro-btn__sub">
-                {missingCount > 0 ? `위치없음 ${missingCount}건 제외` : `경고 ${warnCount}건`}
+                {missingCount > 0 ? `주소 못 찾음 ${missingCount}건 제외` : `경고 ${warnCount}건`}
               </span>
             </button>
           </div>
@@ -330,7 +349,7 @@ export function GeocodeScreen() {
             if (n.verdict === '요확인' && !acknowledged) return 'is-check';
             return undefined;
           }}
-          empty={running ? null : '표시할 행이 없습니다'}
+          empty={running ? null : emptyMessage}
           trailing={running ? '처리 중…' : null}
         />
       </div>

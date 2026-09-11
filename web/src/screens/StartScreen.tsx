@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 
 import { FileDrop, KeyInput, PostcodeModal } from '../components';
 import { STEP_LABELS } from '../components';
@@ -134,14 +135,10 @@ export function StartScreen() {
         <div className="ro-s1__grid">
           <section className="ro-card">
             <div className="ro-card__head">
-              <div className="ro-card__title">1. 카카오 REST API 키</div>
+              <div className="ro-card__title">1. REST API Key</div>
               <div className="ro-card__note">이 탭에서만 유지</div>
             </div>
             <KeyInput value={keyValue} onChange={onKeyChange} />
-            <p className="ro-hint">
-              유효성은 첫 지오코딩이 성공하면 확인됩니다. 키는 저장소나 localStorage에 저장되지
-              않습니다.
-            </p>
           </section>
 
           <section className="ro-card">
@@ -150,14 +147,15 @@ export function StartScreen() {
               <div className="ro-card__note">지난 출발지 기억됨</div>
             </div>
             <div className="ro-row ro-row--center">
-              <div className="ro-readout">
-                <span className="ro-readout__dot" />
-                <span className="ro-readout__text">{origin?.address ?? '아직 고르지 않음'}</span>
-              </div>
+              {origin ? (
+                <div className="ro-readout">
+                  <span className="ro-readout__dot" />
+                  <span className="ro-readout__text">{origin.address}</span>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="ro-btn ro-btn--soft"
-                style={{ fontSize: 12 }}
                 onClick={() => setPostcodeOpen(true)}
               >
                 주소 찾기
@@ -165,7 +163,7 @@ export function StartScreen() {
             </div>
             {origin ? (
               <div className="ro-confirm">
-                <span>✓</span>지오코딩 확인 · {origin.lat.toFixed(4)}, {origin.lon.toFixed(4)}
+                <Check size={15} />지오코딩 확인 · {origin.lat.toFixed(4)}, {origin.lon.toFixed(4)}
               </div>
             ) : (
               <p className="ro-hint">
@@ -220,20 +218,16 @@ export function StartScreen() {
         </section>
 
         <div className="ro-s1__foot">
-          <p className="ro-s1__privacy">
-            데이터는 브라우저 안에서만 처리됩니다. 카카오 서버로는 주소와 좌표만 전송되며,
-            이름·연락처 등 나머지 열은 이 기기를 떠나지 않습니다.
-          </p>
           <button
             type="button"
-            className="ro-btn ro-btn--lg ro-btn--primary"
+            className="ro-btn ro-btn--xl ro-btn--primary"
             disabled={!canStart}
             onClick={() => {
               resolveResume();
               setStep(2);
             }}
           >
-            지오코딩 시작 →
+            시작
           </button>
         </div>
       </div>

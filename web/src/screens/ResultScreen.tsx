@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, Download } from 'lucide-react';
 
 import { DataTable, MapPan, SidePanel } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
@@ -339,7 +340,7 @@ export function ResultScreen() {
                 moveRow(i, i - 1);
               }}
             >
-              ▲
+              <ChevronUp size={15} />
             </button>
             <button
               type="button"
@@ -351,7 +352,7 @@ export function ResultScreen() {
                 moveRow(i, i + 1);
               }}
             >
-              ▼
+              <ChevronDown size={15} />
             </button>
           </span>
         ),
@@ -413,9 +414,7 @@ export function ResultScreen() {
                 disabled={editing || finalOrder.length === 0}
                 onClick={downloadCsv}
               >
-                <span className="ro-btn__ico" aria-hidden>
-                  ↓
-                </span>
+                <Download size={16} />
                 CSV
               </button>
               <button
@@ -424,16 +423,14 @@ export function ResultScreen() {
                 disabled={editing || finalOrder.length === 0}
                 onClick={downloadXlsx}
               >
-                <span className="ro-btn__ico" aria-hidden>
-                  ↓
-                </span>
+                <Download size={16} />
                 엑셀 (xlsx)
               </button>
             </div>
           <div className="ro-s6__edit">
             {editing ? (
               <>
-                <span className="ro-faint ro-hint--small">순서 편집 중 · 행을 끌거나 ▲▼로 이동</span>
+                <span className="ro-faint ro-hint--small">순서 편집 중 · 행을 끌거나 위·아래 버튼으로 이동</span>
                 <span className="ro-row">
                   <button type="button" className="ro-btn ro-btn--xs" onClick={revertToComputed}>
                     되돌리기
@@ -476,7 +473,7 @@ export function ResultScreen() {
             ) : null}
             {warnCount > 0 ? (
               <div className="ro-warn-text">
-                · 미수정 요확인 {warnCount}건이 원본 주소로 포함되었습니다.
+                · 주소가 다른 채로 둔 {warnCount}건이 입력한 주소 그대로 들어갔습니다.
               </div>
             ) : null}
             {!hasBuffer ? (
