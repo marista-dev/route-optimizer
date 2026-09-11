@@ -1159,8 +1159,8 @@ input::placeholder {
 }
 .ro-orderitem__handle {
   color: var(--border-strong);
-  font-size: 16px;
-  letter-spacing: -2px;
+  display: flex;
+  align-items: center;
 }
 .ro-orderitem__no {
   width: 24px;

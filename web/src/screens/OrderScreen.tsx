@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 
 import { MapFit, SidePanel } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
@@ -182,11 +182,15 @@ export function OrderScreen() {
               onDragEnd={onDragEnd}
             >
               <span className="ro-orderitem__handle" aria-hidden>
-                ⋮⋮
+                <GripVertical size={16} />
               </span>
+              {/*
+                클러스터 id는 더 보여 주지 않는다. 지도에는 방문 순번이 찍히는데
+                목록에 '클러스터 6, 클러스터 1'이 섞여 나오면 순서가 틀린 것처럼 읽힌다.
+                이 줄에서 뜻이 있는 숫자는 방문 순번과 배송지 건수뿐이다.
+              */}
               <span className="ro-orderitem__no">{i + 1}</span>
-              <span className="ro-orderitem__name">클러스터 {clusterId + 1}</span>
-              <span className="ro-orderitem__count">{sizeById.get(clusterId) ?? 0}건</span>
+              <span className="ro-orderitem__name">배송지 {sizeById.get(clusterId) ?? 0}건</span>
               <span style={{ display: 'flex', flexDirection: 'column' }}>
                 <button
                   type="button"

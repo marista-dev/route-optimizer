@@ -122,8 +122,15 @@ interface ClusterEntry {
   hitOverlay: any | null;
 }
 
-function defaultLabel(cluster: Cluster): string {
-  return `클러스터 ${cluster.id + 1} · 배송지 ${cluster.groupIds.length}건`;
+/**
+ * hover 라벨.
+ *
+ * 순번이 붙은 클러스터는 순번으로 부른다 — S4 지도에 찍히는 숫자는 클러스터 id가
+ * 아니라 방문 순번이라, id를 보여 주면 화면 어디에도 없는 번호를 말하는 셈이 된다.
+ */
+function defaultLabel(cluster: Cluster, order?: number | null): string {
+  const head = order ? `${order}번째 방문` : `클러스터 ${cluster.id + 1}`;
+  return `${head} · 배송지 ${cluster.groupIds.length}건`;
 }
 
 /** 클러스터별 다각형 + hover 라벨 + 순번 라벨 레이어. */
@@ -257,7 +264,7 @@ export function ClusterLayer({
 
       const onMouseOver = (event: any) => {
         const cur = latest.current;
-        hoverEl.textContent = defaultLabel(cluster);
+        hoverEl.textContent = defaultLabel(cluster, cur.orderOf?.(cluster.id));
         hoverOverlay.setPosition(event.latLng);
         hoverOverlay.setMap(cur.map);
         polygon.setOptions({ fillOpacity: FILL_OPACITY_HOVER });
@@ -304,7 +311,7 @@ export function ClusterLayer({
         const onHitClick = () => select(centroidLL);
         const onHitEnter = () => {
           const cur = latest.current;
-          hoverEl.textContent = defaultLabel(cluster);
+          hoverEl.textContent = defaultLabel(cluster, cur.orderOf?.(cluster.id));
           hoverOverlay.setPosition(centroidLL);
           hoverOverlay.setMap(cur.map);
           polygon.setOptions({ fillOpacity: FILL_OPACITY_HOVER });

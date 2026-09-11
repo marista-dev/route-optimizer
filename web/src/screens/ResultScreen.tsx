@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, GripVertical } from 'lucide-react';
 
 import { DataTable, MapPan, SidePanel } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
@@ -319,7 +319,7 @@ export function ResultScreen() {
         className: 'ro-td--grip',
         cell: () => (
           <span className="ro-orderitem__handle" aria-hidden>
-            ⋮⋮
+            <GripVertical size={16} />
           </span>
         ),
       },
