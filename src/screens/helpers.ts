@@ -301,35 +301,6 @@ export function emptyAddressCount(rows: readonly Row[]): number {
   return Math.max(0, lastIndex + 1 - rows.length);
 }
 
-/** `ResultScreen`의 원본 재업로드 검사에 쓰는 세션 지문. */
-export interface FileSignature {
-  fileName: string;
-  headers: readonly string[];
-  rowCount: number;
-}
-
-/**
- * 재업로드한 파일이 세션과 같은 파일인지 검사한다.
- * 다르면 사용자에게 보여줄 이유를, 같으면 null을 돌려준다.
- * (엉뚱한 파일을 받으면 배송순서가 관계없는 행에 적힌다 — 조용히 넘어가면 안 된다.)
- */
-export function reuploadMismatch(session: FileSignature, uploaded: FileSignature): string | null {
-  if (session.fileName !== uploaded.fileName) {
-    return `파일명이 다릅니다. 세션의 원본은 '${session.fileName}'입니다.`;
-  }
-  if (session.headers.length !== uploaded.headers.length) {
-    return `열 개수가 다릅니다(세션 ${session.headers.length}개 · 올린 파일 ${uploaded.headers.length}개).`;
-  }
-  for (let i = 0; i < session.headers.length; i += 1) {
-    if (session.headers[i] !== uploaded.headers[i]) {
-      return `${i + 1}번째 열 이름이 다릅니다(세션 '${session.headers[i]}' · 올린 파일 '${uploaded.headers[i]}').`;
-    }
-  }
-  if (session.rowCount !== uploaded.rowCount) {
-    return `행 수가 다릅니다(세션 ${session.rowCount}행 · 올린 파일 ${uploaded.rowCount}행).`;
-  }
-  return null;
-}
 
 /**
  * 저장된 그룹·클러스터가 방금 계산한 것과 값까지 같은지.

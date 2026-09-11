@@ -27,7 +27,6 @@ function App() {
 
   const hasKey = useVolatileStore((s) => s.hasKey);
   const reset = useSessionStore((s) => s.reset);
-  const setBuffer = useVolatileStore((s) => s.setBuffer);
   const hasWork = useSessionStore((s) => s.rows.length > 0);
   // 저장된 세션을 아직 이어받지 않았으면 단계와 무관하게 S1(키 재입력)부터 시작한다.
   const resumePending = useVolatileStore((s) => s.resumePending);
@@ -66,7 +65,6 @@ function App() {
               onClick={() => {
                 if (!window.confirm('업로드한 명단과 진행 상황을 모두 지울까요?')) return;
                 reset();
-                setBuffer(null);
               }}
             >
               세션 삭제

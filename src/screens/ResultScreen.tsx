@@ -5,17 +5,9 @@ import { DataTable, MapPan, SidePanel, VerdictBadge } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
 import type { Column } from '../components';
 import { MapCanvas, MarkerLayer, RouteLayer } from '../map';
-import {
-  buildOrderMap,
-  buildXlsx,
-  buildXlsxFromRecords,
-  downloadBlob,
-  outputFileName,
-  parseUploadedFile,
-} from '../io';
+import { buildXlsx, downloadBlob, outputFileName } from '../io';
 import { useSessionStore } from '../store/session';
-import { showError, showInfo } from '../store/toast';
-import { getOriginalBuffer, useVolatileStore } from '../store/volatile';
+import { showInfo } from '../store/toast';
 import type { LatLng, Node } from '../types';
 import {
   assembleFinalOrder,
@@ -23,7 +15,6 @@ import {
   groupBuildingLabel,
   groupOfNode,
   moveItem,
-  reuploadMismatch,
   showApiError,
   withPicks,
 } from './helpers';
@@ -46,8 +37,8 @@ function sameOrder(a: readonly number[], b: readonly number[]): boolean {
 export function ResultScreen() {
   const origin = useSessionStore((s) => s.origin);
   const fileName = useSessionStore((s) => s.fileName);
-  const sheetName = useSessionStore((s) => s.sheetName);
   const headers = useSessionStore((s) => s.headers);
+  const addressColumn = useSessionStore((s) => s.addressColumn);
   const rows = useSessionStore((s) => s.rows);
   const nodes = useSessionStore((s) => s.nodes);
   const groups = useSessionStore((s) => s.groups);
@@ -57,10 +48,6 @@ export function ResultScreen() {
   const finalOrder = useSessionStore((s) => s.finalOrder);
   const setFinalOrder = useSessionStore((s) => s.setFinalOrder);
   const reset = useSessionStore((s) => s.reset);
-
-  const hasBuffer = useVolatileStore((s) => s.hasBuffer);
-  const setBuffer = useVolatileStore((s) => s.setBuffer);
-  const reuploadRef = useRef<HTMLInputElement>(null);
 
   // ── 순서 편집 ──────────────────────────────────────────────────────────────
   // 편집 중에는 draft가 화면(표·지도·순번)의 기준이고, "적용"을 눌러야 스토어에 들어간다.
@@ -311,16 +298,15 @@ export function ResultScreen() {
     setDraft([]);
     setHoverNodeId(null);
     reset();
-    setBuffer(null);
-  }, [reset, setBuffer, lastDownload]);
+  }, [reset, lastDownload]);
 
-  /** blob 만들기 → 내려받기. 만들기가 실패하면 fail 메시지만 보여준다. */
-  const download = (make: () => Blob, fail: string) => {
+  /** xlsx를 만들어 내려받는다. 만들기가 실패하면 메시지만 보여준다. */
+  const downloadXlsx = async () => {
     const name = outputFileName(fileName, 'xlsx');
     try {
-      downloadBlob(make(), name);
+      downloadBlob(await buildXlsx({ headers, rows, nodes, finalOrder, addressColumn }), name);
     } catch (err) {
-      showApiError(err, fail);
+      showApiError(err, 'xlsx를 만들지 못했습니다.');
       return;
     }
     // 브라우저 다운로드 표시만으로는 "무엇을 언제 받았는지"가 남지 않는다.
@@ -329,51 +315,13 @@ export function ResultScreen() {
     showInfo(`${name} · ${finalOrder.length}건을 내려받았습니다.`);
   };
 
-  const downloadXlsx = () => {
-    // 원본 바이트가 있으면 원본 워크북에 '배송순서' 열만 끼워 넣는다(열·시트 그대로).
-    // 새로고침 등으로 사라졌으면 결과만으로 새 워크북을 만든다 — 원본 열은 전부 살리고
-    // 서식만 잃는다. 예전처럼 버튼을 잠가 xlsx를 아예 못 받게 하지는 않는다.
-    const buffer = getOriginalBuffer();
-    download(
-      () =>
-        buffer
-          ? buildXlsx(buffer, sheetName, buildOrderMap(nodes, finalOrder))
-          : buildXlsxFromRecords({ headers, rows, nodes, finalOrder }),
-      'xlsx를 만들지 못했습니다.',
-    );
-  };
-
   /** 다운로드 버튼이 왜 꺼졌는지 / 무엇이 나오는지. 비활성 버튼에는 늘 이유를 붙인다. */
   const downloadReason = editing
     ? '순서 편집을 적용하거나 취소한 뒤에 내려받을 수 있습니다'
     : finalOrder.length === 0
       ? '최종 순서가 아직 없습니다'
-      : hasBuffer
-        ? '원본 워크북에 배송순서 열을 끼워 넣습니다 — 서식 그대로'
-        : '원본 바이트가 없어 값만 담은 새 워크북을 만듭니다 — 서식 없음';
+      : '배송순서 · 연번 · 이름 · 주소 네 열을 서식과 함께 내려받습니다';
 
-  /**
-   * 새로고침으로 사라진 원본 바이트를 다시 채운다.
-   * 엉뚱한 파일을 받으면 배송순서가 관계없는 행에 적히므로
-   * 파일명·헤더(이름과 순서)·행 수가 모두 같을 때만 받아들인다.
-   */
-  const onReupload = async (file: File) => {
-    try {
-      const parsed = await parseUploadedFile(file, file.name);
-      const reason = reuploadMismatch(
-        { fileName, headers, rowCount: rows.length },
-        { fileName: file.name, headers: parsed.headers, rowCount: parsed.rows.length },
-      );
-      if (reason) {
-        showError(`세션의 원본과 다른 파일입니다. ${reason}`);
-        return;
-      }
-      setBuffer(parsed.originalBuffer);
-      showInfo('원본 파일을 확인했습니다. 이제 원본 서식 그대로 받을 수 있습니다.');
-    } catch (err) {
-      showApiError(err, '파일을 읽지 못했습니다.');
-    }
-  };
 
   const columns = useMemo<Column<ResultRow>[]>(() => {
     const base: Column<ResultRow>[] = [
@@ -507,23 +455,12 @@ export function ResultScreen() {
                 className="ro-btn ro-btn--dl ro-btn--grow"
                 disabled={editing || finalOrder.length === 0}
                 title={downloadReason}
-                onClick={downloadXlsx}
+                onClick={() => void downloadXlsx()}
               >
                 <Download size={16} />
-                {/* 원본 바이트 유무로 내용이 달라진다. 같은 문구를 쓰면 알 방법이 없다. */}
-                {hasBuffer ? '엑셀 (xlsx)' : '엑셀 (xlsx) · 서식 없음'}
+                엑셀 (xlsx)
                 {staleDownload ? <span className="ro-btn__sub">· 변경됨</span> : null}
               </button>
-              {!hasBuffer ? (
-                <button
-                  type="button"
-                  className="ro-btn ro-btn--sm"
-                  title="원본 파일을 다시 올리면 xlsx가 원본 서식을 그대로 씁니다"
-                  onClick={() => reuploadRef.current?.click()}
-                >
-                  원본 다시 올리기
-                </button>
-              ) : null}
             </div>
             {/*
               편집 중에는 안내 한 줄 + 버튼 줄로 쌓는다. 520px 패널에서 긴 안내와 버튼
@@ -624,17 +561,6 @@ export function ResultScreen() {
         />
       </SidePanel>
 
-      <input
-        ref={reuploadRef}
-        type="file"
-        accept=".xlsx,.xls,.csv"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void onReupload(file);
-          e.target.value = '';
-        }}
-      />
     </div>
   );
 }

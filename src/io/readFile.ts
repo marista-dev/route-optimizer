@@ -32,8 +32,6 @@ export interface ParsedFile {
   rows: Row[];
   /** 지오코딩 씨앗 */
   nodesSeed: NodeSeed[];
-  /** 원본 파일 바이트. xlsx 저장 때 원본 워크북을 다시 읽는 데 쓴다 */
-  originalBuffer: ArrayBuffer;
 }
 
 /** 업로드 입력으로 받아들이는 형태. */
@@ -172,5 +170,5 @@ export async function parseUploadedFile(
   }
 
   const { rows, nodesSeed } = buildRows(headers, dataRows, addressColumn);
-  return { sheetName, addressColumn, headers, rows, nodesSeed, originalBuffer };
+  return { sheetName, addressColumn, headers, rows, nodesSeed };
 }

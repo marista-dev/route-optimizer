@@ -1,17 +1,14 @@
 export { ADDRESS_COLUMN_HINT, NAME_COLUMN, parseUploadedFile } from './readFile';
 export type { NodeSeed, ParsedFile, UploadInput } from './readFile';
 export {
-  KAKAO_ADDR_COLUMN,
-  LAT_COLUMN,
-  LON_COLUMN,
+  KEEP_COLUMNS,
   ORDER_COLUMN,
   OUTPUT_SUFFIX,
-  REVERSE_ADDR_COLUMN,
-  VERDICT_COLUMN,
   buildOrderMap,
+  buildRecords,
   buildXlsx,
-  buildXlsxFromRecords,
   downloadBlob,
+  outputColumns,
   outputFileName,
 } from './writeFile';
-export type { RecordsInput } from './writeFile';
+export type { OutputRecord, RecordsInput } from './writeFile';

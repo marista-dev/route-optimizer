@@ -14,7 +14,6 @@ import {
   makeOrderOf,
   makeTimeSec,
   moveItem,
-  reuploadMismatch,
   sameClustering,
   seedsFromRows,
   verdictCounts,
@@ -316,30 +315,6 @@ describe('emptyAddressCount', () => {
   });
 });
 
-describe('reuploadMismatch', () => {
-  const session = { fileName: '배송.xlsx', headers: ['이름', '택배받을 주소'], rowCount: 124 };
-
-  it('같은 파일이면 null', () => {
-    expect(reuploadMismatch(session, { ...session })).toBeNull();
-  });
-
-  it('파일명이 다르면 거부한다', () => {
-    expect(reuploadMismatch(session, { ...session, fileName: '다른.xlsx' })).toContain('파일명');
-  });
-
-  it('열 개수가 다르면 거부한다', () => {
-    expect(reuploadMismatch(session, { ...session, headers: ['이름'] })).toContain('열 개수');
-  });
-
-  it('열 순서가 다르면 거부한다', () => {
-    const swapped = { ...session, headers: ['택배받을 주소', '이름'] };
-    expect(reuploadMismatch(session, swapped)).toContain('1번째 열 이름');
-  });
-
-  it('행 수가 다르면 거부한다', () => {
-    expect(reuploadMismatch(session, { ...session, rowCount: 123 })).toContain('행 수');
-  });
-});
 
 describe('groupBuildingLabel', () => {
   it('멤버가 하나면 그 건물 이름', () => {

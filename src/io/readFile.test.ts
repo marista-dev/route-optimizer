@@ -71,13 +71,6 @@ describe('parseUploadedFile — xlsx', () => {
 
     await expect(parseUploadedFile(buffer, 'sample.xlsx')).rejects.toThrow('택배받을 주소');
   });
-
-  it('원본 바이트를 그대로 되돌려준다', async () => {
-    const buffer = makeXlsx(SAMPLE_SHEETS);
-    const parsed = await parseUploadedFile(buffer, 'sample.xlsx');
-
-    expect(parsed.originalBuffer.byteLength).toBe(buffer.byteLength);
-  });
 });
 
 describe('parseUploadedFile — csv', () => {

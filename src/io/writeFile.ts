@@ -1,23 +1,32 @@
 /**
- * 결과 파일 생성 — 데스크톱판 `app.py`의 `_save_xlsx` 이식.
+ * 결과 파일 생성.
  *
- * 산출물은 xlsx 하나뿐이다. 원본 워크북이 있으면 그 시트 1열에 '배송순서'를 끼워 넣고
- * (이미 있으면 값을 지우고 덮어씀) 순번대로 행을 정렬한다. 원본 바이트가 없으면
- * 결과 표만으로 새 워크북을 짠다. SheetJS CE는 셀 서식을 보존하지 못한다(계획 12절).
+ * 산출물은 서식을 입힌 xlsx 하나다. 배송 기사가 들고 다니며 보는 종이라
+ * 순서·연번·이름·주소 네 열만 담는다. 좌표와 검증 결과는 화면에서 확인이 끝나면
+ * 쓸모가 없고, 열이 늘어날수록 주소 칸이 좁아져 읽기 어려워진다.
+ *
+ * 원본 워크북을 그대로 물려받던 예전 방식은 버렸다. 남길 열이 정해진 이상
+ * 원본 서식을 지킬 이유가 없고, 원본 바이트를 들고 있을 이유도 사라진다.
  */
-import * as XLSX from 'xlsx';
+// 루트 export가 없다. 브라우저 번들을 직접 가리킨다(node/universal 빌드도 따로 있다).
+import writeXlsxFile from 'write-excel-file/browser';
+import type { Row as SheetRow, SheetData } from 'write-excel-file/browser';
 
 import type { Node, Row } from '../types';
 
-/** 결과 열 이름 — 데스크톱 산출물과 글자 하나까지 같아야 한다. */
+/** 우리가 매기는 순번 열. */
 export const ORDER_COLUMN = '배송순서';
-export const LAT_COLUMN = 'Latitude';
-export const LON_COLUMN = 'Longitude';
-export const KAKAO_ADDR_COLUMN = '카카오_확인주소';
-export const REVERSE_ADDR_COLUMN = '역지오코딩_주소';
-export const VERDICT_COLUMN = '주소검증결과';
 
-/** 결과 파일 이름 접미사. `<원본이름>_배송순서완성.<확장자>` */
+/**
+ * 결과에 남길 원본 열.
+ *
+ * 여기 없는 이름의 열은 실리지 않는다. 손으로 채우는 빈 칸(서명)이나
+ * 연락처처럼 종이에 인쇄하면 곤란한 열을 자동으로 걸러 내기 위한 목록이다.
+ * 주소 열은 파일마다 이름이 달라 따로 받는다.
+ */
+export const KEEP_COLUMNS = ['연번', '이름'] as const;
+
+/** 결과 파일 이름 접미사. `<원본이름>_배송순서완성.xlsx` */
 export const OUTPUT_SUFFIX = '_배송순서완성';
 
 /** 업로드 파일명에서 결과 파일명을 만든다. */
@@ -30,7 +39,10 @@ export function outputFileName(fileName: string, extension: 'xlsx'): string {
  * 최종 순서를 `원본 행 번호 → 배송순서(1부터)` 맵으로 바꾼다.
  * 좌표가 없어 최종 순서에 못 들어간 노드는 맵에 없다.
  */
-export function buildOrderMap(nodes: readonly Node[], finalOrder: readonly number[]): Map<number, number> {
+export function buildOrderMap(
+  nodes: readonly Node[],
+  finalOrder: readonly number[],
+): Map<number, number> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const map = new Map<number, number>();
   finalOrder.forEach((nodeId, i) => {
@@ -50,197 +62,153 @@ export interface RecordsInput {
   nodes: readonly Node[];
   /** 최종 배송 순서(노드 id 순서열) */
   finalOrder: readonly number[];
+  /** 주소 열 이름. 파일마다 달라 탐지 결과를 그대로 받는다 */
+  addressColumn?: string | null;
 }
 
-/** 좌표·검증 열. 원본에 이미 있으면 그 자리에 값만 덮어쓴다. */
-const EXTRA_COLUMNS = [
-  LAT_COLUMN,
-  LON_COLUMN,
-  KAKAO_ADDR_COLUMN,
-  REVERSE_ADDR_COLUMN,
-  VERDICT_COLUMN,
-] as const;
+export interface OutputRecord {
+  /** 배송순서. 좌표를 못 찾아 경로에서 빠진 행은 null */
+  order: number | null;
+  /** 남긴 원본 열의 값(열 이름 → 값) */
+  values: Record<string, string>;
+}
+
+/** 실을 원본 열을 원래 순서대로 고른다. */
+export function outputColumns(
+  headers: readonly string[],
+  addressColumn?: string | null,
+): string[] {
+  const keep = new Set<string>(KEEP_COLUMNS);
+  if (addressColumn) keep.add(addressColumn);
+  const picked = headers.filter((h) => h !== ORDER_COLUMN && keep.has(h));
+  // 이름이 다른 양식이면 고를 것이 없다. 그때는 버리지 말고 원본 열을 그대로 싣는다 —
+  // 아무것도 없는 파일을 주는 것보다 낫다.
+  return picked.length > 0 ? picked : headers.filter((h) => h !== ORDER_COLUMN);
+}
 
 /**
- * 결과 표를 만든다. "원본 없이 만드는 xlsx"가 쓰는 조립기다.
+ * 결과 표를 만든다.
  *
- * 열 구성: 배송순서 → 원본 열 전부 → 원본에 없던 좌표·검증 열.
- * 원본 열은 하나도 버리지 않는다 — 주소·연락처처럼 앱이 직접 쓰지 않는 열도
- * 그대로 실려야 현장에서 쓸 수 있다. 원본이 이미 결과 파일이어서 Latitude 등을
- * 갖고 있으면 **원래 자리에** 두고 값만 새로 쓴다(데스크톱판과 같은 규칙).
- *
- * 순번이 없는 행(지오코딩 실패 등)도 뒤에 남긴다. 원본 워크북 경로(`buildXlsx`)가
- * 원본 행을 통째로 보존하므로, 여기서 버리면 같은 "엑셀" 버튼이 원본 유무에 따라
- * 사람을 빠뜨린다.
+ * 순번이 있는 행이 순번대로 먼저 오고, 순번이 없는 행(주소를 못 찾아 경로에서 빠진 행)은
+ * 원래 순서를 지켜 뒤에 붙는다. **빠진 행도 반드시 싣는다** — 여기서 버리면 그 사람이
+ * 배송 명단에서 조용히 사라진다.
  */
 export function buildRecords(input: RecordsInput): {
   columns: string[];
-  records: Record<string, unknown>[];
+  records: OutputRecord[];
 } {
-  const { headers, rows, nodes, finalOrder } = input;
+  const { headers, rows, nodes, finalOrder, addressColumn } = input;
   const orderByRow = buildOrderMap(nodes, finalOrder);
-  const nodeByRow = new Map(nodes.map((n) => [n.rowIndex, n]));
+  const columns = outputColumns(headers, addressColumn);
 
-  const keptColumns = headers.filter((h) => h !== ORDER_COLUMN);
-  const appendedColumns = EXTRA_COLUMNS.filter((c) => !keptColumns.includes(c));
-  const dataColumns = [...keptColumns, ...appendedColumns];
-  const columns = [ORDER_COLUMN, ...dataColumns];
-
-  const valueOf = (column: string, row: Row, node: Node | undefined): unknown => {
-    switch (column) {
-      case LAT_COLUMN: return node?.lat ?? '';
-      case LON_COLUMN: return node?.lon ?? '';
-      case KAKAO_ADDR_COLUMN: return node?.kakaoAddr ?? '';
-      case REVERSE_ADDR_COLUMN: return node?.reverseAddr ?? '';
-      case VERDICT_COLUMN: return node?.verdict ?? '';
-      default: return row[column] ?? '';
+  const toRecord = (row: Row): OutputRecord => {
+    const values: Record<string, string> = {};
+    for (const col of columns) {
+      const raw = row[col];
+      values[col] = raw == null ? '' : String(raw);
     }
-  };
-
-  const toRecord = (row: Row): Record<string, unknown> => {
-    const node = nodeByRow.get(row.rowIndex);
-    const record: Record<string, unknown> = { [ORDER_COLUMN]: orderByRow.get(row.rowIndex) ?? '' };
-    for (const col of dataColumns) record[col] = valueOf(col, row, node);
-    return record;
+    return { order: orderByRow.get(row.rowIndex) ?? null, values };
   };
 
   const ordered = rows
     .filter((row) => orderByRow.has(row.rowIndex))
     .map(toRecord)
-    .sort((a, b) => (a[ORDER_COLUMN] as number) - (b[ORDER_COLUMN] as number));
-
-  // 순번 없는 행은 원래 순서를 지켜 뒤에 붙인다(파이썬 `_row_sort_key`와 같은 규칙).
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const rest = rows.filter((row) => !orderByRow.has(row.rowIndex)).map(toRecord);
 
   return { columns, records: [...ordered, ...rest] };
 }
 
-// ── xlsx ────────────────────────────────────────────────────────────────────
-/** 숫자 순번이 먼저, 순번 없는 행은 뒤에 원래 순서 그대로(파이썬 `_row_sort_key`). */
-function compareByOrder(a: unknown, b: unknown): number {
-  const aNum = typeof a === 'number' && Number.isFinite(a);
-  const bNum = typeof b === 'number' && Number.isFinite(b);
-  if (aNum && bNum) return (a as number) - (b as number);
-  if (aNum) return -1;
-  if (bNum) return 1;
-  return 0;
+// ── 서식 ────────────────────────────────────────────────────────────────────
+const HEADER_BG = '#1E4ED8';
+const HEADER_FG = '#FFFFFF';
+const BORDER = '#C7D2F5';
+/** 순번이 없는 행(경로에서 빠진 행) 배경. 파일만 봐도 눈에 띄어야 한다. */
+const EXCLUDED_BG = '#FEF3C7';
+
+/** 글자 수로 열 너비를 잡는다. 한글은 대략 두 칸을 차지한다. */
+function columnWidth(header: string, values: readonly string[]): number {
+  const cells = [header, ...values];
+  const longest = cells.reduce((max, v) => Math.max(max, displayWidth(v)), 0);
+  return Math.min(Math.max(longest + 4, 8), 64);
 }
 
-/** xlsx/xlsm/ods는 ZIP(`PK\x03\x04`), 구형 xls는 OLE2(`D0CF11E0`)로 시작한다. */
-function looksLikeBinaryWorkbook(buffer: ArrayBuffer): boolean {
-  const head = new Uint8Array(buffer, 0, Math.min(8, buffer.byteLength));
-  if (head[0] === 0x50 && head[1] === 0x4b) return true; // "PK"
-  return (
-    head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0
-  );
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) width += ch.charCodeAt(0) > 0x2e80 ? 2 : 1;
+  return width;
 }
+
+/** 가운데로 모을 열 — 숫자이거나 짧은 값이라 왼쪽 정렬이 오히려 읽기 나쁘다. */
+const CENTERED = new Set<string>([ORDER_COLUMN, '연번']);
 
 /**
- * 업로드 바이트를 워크북으로 읽는다.
+ * 서식을 입힌 xlsx Blob을 만든다.
  *
- * CSV는 반드시 UTF-8로 **직접 디코딩**해서 문자열로 넘긴다. 바이트를 그대로
- * 주면 SheetJS가 BOM 없는 UTF-8을 cp1252로 오인해 한글이 전부 깨진다
- * (읽기 경로 `readFile.parseCsv`는 처음부터 TextDecoder를 썼기 때문에
- * 화면은 멀쩡하고 내려받은 파일만 깨지는 형태로 드러났다).
- * TextDecoder가 BOM을 벗겨 주지만 이중 안전장치로 한 번 더 지운다.
+ * 머리글은 고정(첫 행 sticky)이라 아래로 내려도 어느 열인지 보인다.
+ * 순번이 없는 행은 노란 배경으로 구분한다 — 실려는 있지만 경로에는 없는 사람이다.
  */
-function readWorkbook(originalBuffer: ArrayBuffer): XLSX.WorkBook {
-  if (looksLikeBinaryWorkbook(originalBuffer)) {
-    return XLSX.read(originalBuffer, { type: 'array' });
-  }
-  const text = new TextDecoder('utf-8').decode(originalBuffer).replace(/^\uFEFF/, '');
-  return XLSX.read(text, { type: 'string' });
-}
-
-/**
- * 원본 워크북에 '배송순서' 열을 넣어 xlsx Blob을 만든다.
- *
- * @param originalBuffer 업로드한 파일의 원본 바이트. CSV면 UTF-8로 디코딩해 읽는다
- * @param sheetName 주소 열을 찾은 시트명. null이면 첫 시트
- * @param orders 원본 행 번호(0부터) → 배송순서
- */
-export function buildXlsx(
-  originalBuffer: ArrayBuffer,
-  sheetName: string | null,
-  orders: ReadonlyMap<number, number>,
-): Blob {
-  const wb = readWorkbook(originalBuffer);
-  const target = sheetName && wb.Sheets[sheetName] ? sheetName : wb.SheetNames[0];
-  const sheet = wb.Sheets[target];
-  if (!sheet) throw new Error('저장할 시트를 찾지 못했습니다.');
-
-  const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    blankrows: true,
-    defval: null,
-    raw: true,
-  });
-  const header = (aoa[0] ?? []).map((v) => (v == null ? '' : v));
-  const dataRows = aoa.slice(1);
-
-  let col = header.findIndex((v) => String(v) === ORDER_COLUMN);
-  if (col >= 0) {
-    // 재실행 시 이전 값 잔존 방지 — 열 전체 초기화
-    for (const row of dataRows) row[col] = null;
-  } else {
-    header.unshift(ORDER_COLUMN);
-    for (const row of dataRows) row.unshift(null);
-    col = 0;
-  }
-
-  orders.forEach((order, rowIndex) => {
-    const row = dataRows[rowIndex];
-    if (row) row[col] = order;
-  });
-
-  // Array.prototype.sort는 안정 정렬이라 순번 없는 행의 원래 순서가 유지된다.
-  dataRows.sort((a, b) => compareByOrder(a[col], b[col]));
-
-  const nextSheet = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
-  wb.Sheets[target] = nextSheet;
-
-  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
-  return new Blob([out], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
-}
-
-/**
- * 원본 파일 없이 결과만으로 xlsx Blob을 만든다.
- *
- * 원본 바이트는 메모리에만 있어(localStorage에 못 담는다) 새로고침하면 사라진다.
- * 그때도 xlsx를 받을 수 있어야 하므로 결과 표만으로 시트를 짠다.
- * 원본 열은 전부 살리고, 좌표·검증 열만 뒤에 덧붙는다.
- * 원본 워크북의 서식은 재현하지 못한다(값만 옮긴다).
- */
-export function buildXlsxFromRecords(input: RecordsInput, sheetName = '배송순서'): Blob {
+export async function buildXlsx(input: RecordsInput, sheetName = '배송순서'): Promise<Blob> {
   const { columns, records } = buildRecords(input);
-  const aoa: unknown[][] = [
-    columns,
-    ...records.map((r) => columns.map((c) => r[c] ?? '')),
-  ];
-  const sheet = XLSX.utils.aoa_to_sheet(aoa);
-  // 첫 행 고정 — 124행을 훑을 때 머리글이 따라다녀야 쓸 만하다.
-  sheet['!freeze'] = { xSplit: 0, ySplit: 1 };
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, sheet, sheetName.slice(0, 31));
-  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
-  return new Blob([out], {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  const allColumns = [ORDER_COLUMN, ...columns];
+
+  const header: SheetRow = allColumns.map((name) => ({
+    value: name,
+    fontWeight: 'bold' as const,
+    backgroundColor: HEADER_BG,
+    textColor: HEADER_FG,
+    align: 'center' as const,
+    alignVertical: 'center' as const,
+    borderColor: BORDER,
+    borderStyle: 'thin' as const,
+    height: 22,
+  }));
+
+  const body: SheetRow[] = records.map((record) => {
+    const excluded = record.order === null;
+    return allColumns.map((name) => {
+      const isOrder = name === ORDER_COLUMN;
+      return {
+        // 순번은 숫자로 써야 엑셀에서 정렬·필터가 제대로 동작한다.
+        // 순번이 없는 행은 값을 비운다(0으로 쓰면 1번 앞에 서 버린다).
+        ...(isOrder
+          ? record.order === null
+            ? {}
+            : { type: Number, value: record.order }
+          : { value: record.values[name] }),
+        align: CENTERED.has(name) ? ('center' as const) : ('left' as const),
+        alignVertical: 'center' as const,
+        borderColor: BORDER,
+        borderStyle: 'thin' as const,
+        ...(excluded ? { backgroundColor: EXCLUDED_BG } : {}),
+      };
+    });
   });
+
+  const widths = allColumns.map((name) => ({
+    width: columnWidth(
+      name,
+      records.map((r) => (name === ORDER_COLUMN ? String(r.order ?? '') : r.values[name] ?? '')),
+    ),
+  }));
+
+  const data: SheetData = [header, ...body];
+  return writeXlsxFile(
+    data,
+    { sheet: sheetName, columns: widths, stickyRowsCount: 1 },
+    { fontFamily: 'Malgun Gothic', fontSize: 11 },
+  ).toBlob();
 }
 
-// ── 다운로드 ────────────────────────────────────────────────────────────────
-/** Blob을 파일로 내려받는다. 브라우저에서만 동작한다. */
+// ── 내려받기 ────────────────────────────────────────────────────────────────
+/** Blob을 파일로 내려받는다. */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
-  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  // 클릭 직후 revoke하면 일부 브라우저에서 저장이 취소된다.
-  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  a.remove();
+  URL.revokeObjectURL(url);
 }

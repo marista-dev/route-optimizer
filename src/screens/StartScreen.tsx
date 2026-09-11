@@ -39,7 +39,6 @@ export function StartScreen() {
 
   const hasKey = useVolatileStore((s) => s.hasKey);
   const setRestKey = useVolatileStore((s) => s.setRestKey);
-  const setBuffer = useVolatileStore((s) => s.setBuffer);
   const resumePending = useVolatileStore((s) => s.resumePending);
   const resolveResume = useVolatileStore((s) => s.resolveResume);
 
@@ -103,7 +102,6 @@ export function StartScreen() {
     try {
       const parsed = await parseUploadedFile(file, file.name);
       setFile(file.name, parsed.sheetName, parsed.addressColumn, parsed.headers, parsed.rows);
-      setBuffer(parsed.originalBuffer);
     } catch (err) {
       const message = err instanceof Error ? err.message : '파일을 읽지 못했습니다.';
       showError(message);
@@ -152,7 +150,6 @@ export function StartScreen() {
                 onClick={() => {
                   if (!window.confirm('업로드한 명단과 진행 상황을 모두 지울까요?')) return;
                   reset();
-                  setBuffer(null);
                   resolveResume();
                 }}
               >
