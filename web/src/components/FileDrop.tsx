@@ -33,7 +33,7 @@ export function FileDrop({ onFile, busy }: FileDropProps) {
         <span className="ro-drop__title">
           {busy ? '파일을 읽는 중…' : '파일을 끌어다 놓거나 클릭해서 선택'}
         </span>
-        <span className="ro-hint">'택배받을 주소' 열이 있는 시트를 자동으로 찾습니다</span>
+        <span className="ro-hint">'택배받을 주소' 열 자동 인식</span>
       </button>
       <input
         ref={inputRef}

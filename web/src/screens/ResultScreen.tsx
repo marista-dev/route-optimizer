@@ -449,9 +449,6 @@ export function ResultScreen() {
               </>
             ) : (
               <>
-                <span className="ro-faint ro-hint--small">
-                  행에 마우스를 올리면 지도에서 그 지점이 강조됩니다.
-                </span>
                 <button
                   type="button"
                   className="ro-btn ro-btn--xs"
@@ -473,12 +470,12 @@ export function ResultScreen() {
             ) : null}
             {warnCount > 0 ? (
               <div className="ro-warn-text">
-                · 주소가 다른 채로 둔 {warnCount}건이 입력한 주소 그대로 들어갔습니다.
+                · 주소가 다른 채로 둔 {warnCount}건 포함
               </div>
             ) : null}
             {!hasBuffer ? (
               <div className="ro-faint ro-hint--small">
-                · 원본 바이트가 없어 xlsx는 결과만으로 새로 만듭니다(열 값은 그대로, 서식은 빠짐).{' '}
+                · 원본 파일이 없어 xlsx는 서식 없이 새로 만듭니다.{' '}
                 <button
                   type="button"
                   className="ro-btn ro-btn--xs"

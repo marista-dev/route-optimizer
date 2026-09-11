@@ -162,9 +162,7 @@ export function ClusterScreen() {
           </div>
         </div>
 
-        <p className="ro-hint">
-          클러스터가 많으면 다음 단계에서 클릭이 늘어납니다. 20~30개를 권장합니다.
-        </p>
+        <p className="ro-hint">20~30개 권장</p>
 
         <div className="ro-legend">
           <span>

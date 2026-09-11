@@ -88,7 +88,6 @@ export function PostcodeModal({ title, subtitle, onSelect, onClose }: PostcodeMo
       {error ? <p style={{ padding: 16, color: 'var(--danger)' }}>{error}</p> : null}
       <div className="ro-postcode" ref={hostRef} />
       <div className="ro-modal__foot">
-        <span>선택한 주소는 카카오 로컬 API로 좌표를 확인합니다.</span>
         <button type="button" className="ro-btn ro-btn--sm" onClick={onClose}>
           닫기
         </button>

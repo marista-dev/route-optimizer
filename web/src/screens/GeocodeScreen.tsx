@@ -357,7 +357,7 @@ export function GeocodeScreen() {
       {fixing ? (
         <PostcodeModal
           title="주소 수정"
-          subtitle={`${fixing.name || `행 ${fixing.rowIndex + 1}`} · 선택한 주소로 좌표를 다시 확인합니다`}
+          subtitle={fixing.name || `행 ${fixing.rowIndex + 1}`}
           onSelect={applyFix}
           onClose={() => setFixing(null)}
         />

@@ -749,7 +749,7 @@ input::placeholder {
 .ro-modal__foot {
   padding: 12px 18px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
   font-size: 14px;

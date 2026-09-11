@@ -466,8 +466,8 @@ export function EntryExitScreen() {
         title="진입 · 이탈 지점"
         subtitle={
           autoCount > 0
-            ? `마커를 클릭하면 1회는 진입, 2회째는 이탈로 지정됩니다. 지점이 하나뿐인 클러스터 ${autoCount}개는 자동으로 확정했습니다.`
-            : '마커를 클릭하면 1회는 진입, 2회째는 이탈로 지정됩니다.'
+            ? `마커 1번 클릭 = 진입, 2번째 = 이탈. 단일 지점 ${autoCount}개는 자동 확정.`
+            : '마커 1번 클릭 = 진입, 2번째 = 이탈.'
         }
         bodyClassName="ro-panel__scroll"
         footer={
@@ -491,10 +491,11 @@ export function EntryExitScreen() {
             {confirmedHere && !running ? (
               <>
                 <div className="ro-calls">
-                  <span>도로시간 호출 {callCount}회</span>
-                  <span className={pick?.haversineFallbacks ? 'ro-warn-text' : undefined}>
-                    실패 {pick?.haversineFallbacks ?? 0} → Haversine 대체
-                  </span>
+                  <span>도로시간 {callCount}회 호출</span>
+                  {/* 0건일 때는 굳이 알릴 것이 없다. 대체가 일어났을 때만 말한다. */}
+                  {pick?.haversineFallbacks ? (
+                    <span className="ro-warn-text">직선거리 대체 {pick.haversineFallbacks}건</span>
+                  ) : null}
                 </div>
                 <ProgressTrack thin tone="ok" pct={100} />
               </>
@@ -516,7 +517,7 @@ export function EntryExitScreen() {
             ) : null}
             {single ? (
               // 단일 지점은 자동으로 확정된다. 누를 것이 없으므로 버튼 대신 결과만 알린다.
-              <div className="ro-autodone">지점이 하나뿐이라 자동으로 확정했습니다</div>
+              <div className="ro-autodone">단일 지점 · 자동 확정</div>
             ) : (
               <button
                 type="button"
@@ -524,13 +525,7 @@ export function EntryExitScreen() {
                 disabled={!ready || running}
                 onClick={() => void confirm()}
               >
-                {confirmedHere
-                  ? '다시 계산'
-                  : haversineMode
-                    ? '확정 (직선거리 추정)'
-                    : ready
-                      ? `확정 · 도로시간 ${callCount}회 호출`
-                      : '진입·이탈을 선택하세요'}
+                {confirmedHere ? '다시 계산' : '확정'}
               </button>
             )}
             {allConfirmed ? (
@@ -604,11 +599,6 @@ export function EntryExitScreen() {
             </span>
           </div>
         </div>
-
-        <p className="ro-hint ro-hint--small" style={{ padding: '0 18px 12px' }}>
-          제안: 진입 = 이전 위치와 가장 가까운 지점, 이탈 = 다음 클러스터와 가장 가까운 지점.
-          고르면 이전 위치에서 진입까지 초록 점선, 이탈에서 다음까지 빨강 점선이 그어집니다.
-        </p>
 
         <div className="ro-memberlist">
           {current.groupIds.map((groupId) => {

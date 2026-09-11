@@ -115,7 +115,7 @@ export function OrderScreen() {
             {clusterOrder.length} / {clusters.length} 지정
           </span>
         }
-        subtitle="지도의 다각형을 방문할 순서대로 클릭하세요. 순번이 매겨진 다각형을 다시 누르면 해제됩니다. 목록은 드래그해 바꿀 수 있습니다."
+        subtitle="다각형을 방문 순서대로 클릭. 다시 누르면 해제."
         bodyClassName="ro-panel__scroll ro-orderlist"
         bodyRef={listRef}
         footer={

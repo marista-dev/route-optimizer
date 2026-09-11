@@ -165,11 +165,7 @@ export function StartScreen() {
               <div className="ro-confirm">
                 <Check size={15} />지오코딩 확인 · {origin.lat.toFixed(4)}, {origin.lon.toFixed(4)}
               </div>
-            ) : (
-              <p className="ro-hint">
-                출발지를 정하면 첫 클러스터의 진입 지점을 자동으로 제안할 수 있습니다.
-              </p>
-            )}
+            ) : null}
           </section>
         </div>
 
@@ -235,7 +231,6 @@ export function StartScreen() {
       {postcodeOpen ? (
         <PostcodeModal
           title="출발지 주소 찾기"
-          subtitle="우편번호 서비스에서 주소를 선택하세요"
           onSelect={onPickOrigin}
           onClose={() => setPostcodeOpen(false)}
         />
