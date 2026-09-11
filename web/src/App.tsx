@@ -38,7 +38,13 @@ function App() {
     <div className="ro-app">
       <header className="ro-header">
         <div className="ro-brand">
-          <div className="ro-brand__logo">RO</div>
+          <img
+            className="ro-brand__logo"
+            src={`${import.meta.env.BASE_URL}icon-64.png`}
+            alt=""
+            width={28}
+            height={28}
+          />
           <div className="ro-brand__name">배송 경로 최적화</div>
         </div>
         <Stepper current={step} onGo={setStep} />
