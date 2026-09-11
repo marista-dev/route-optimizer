@@ -1,8 +1,11 @@
 /**
- * address.test.ts — `core/address.ts`가 Python `src/core/address.py`와 같은지 검증.
+ * address.test.ts — 주소 파싱이 원본 데스크톱 앱(Python `core/address.py`)과 같은지 검증.
  *
- * 1) address.py docstring 예제 그대로
- * 2) `scripts/gen_fixtures.py`가 Python으로 떠낸 fixture와의 대조
+ * 1) 원본 docstring 예제 그대로
+ * 2) Python 구현을 직접 돌려 떠낸 fixture와의 대조
+ *
+ * fixture는 더 이상 생성할 수 없다(원본 Python 앱은 v3.4.0, 커밋 158d81b를 끝으로 제거됐다).
+ * 고정된 참조 데이터로 두고, 이 파일이 깨지면 이식 규칙이 바뀐 것이므로 의도한 변경인지 확인할 것.
  */
 
 import { describe, expect, test } from 'vitest';
@@ -158,7 +161,7 @@ describe('unitSortKey / compareUnit', () => {
   });
 });
 
-describe('Python fixture 대조 (scripts/gen_fixtures.py)', () => {
+describe('Python 구현에서 떠낸 fixture 대조', () => {
   const cases = addressFixture as unknown as AddressCase[];
 
   test('합성 주소 30건이 준비돼 있다', () => {

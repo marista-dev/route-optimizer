@@ -1,5 +1,5 @@
 /**
- * 카카오 모빌리티 길찾기 API 래퍼 — `src/core/optimizer.py`의
+ * 카카오 모빌리티 길찾기 API 래퍼 — 데스크톱판 `optimizer.py`의
  * `_get_driving_time` / `_is_rate_limit_400` / `build_time_matrix` 호출부 이식.
  *
  * 웹판은 OR-Tools TSP를 쓰지 않고 클러스터 내부 블록 쌍만 호출하므로

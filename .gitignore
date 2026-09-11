@@ -3,31 +3,19 @@
 .vscode/
 *.iml
 .omc/
+.claude/
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-*.egg-info/
-
-# PyInstaller 빌드 산출물
-build/
+# 빌드 산출물
+node_modules/
 dist/
-*.spec
 
 # OS
 .DS_Store
 Thumbs.db
 Icon
 
-# 테스트·샘플 데이터
+# 테스트·샘플 데이터(실제 배송 명단이라 커밋하지 않는다)
 배송대상자 배송순서-*.xlsx
 *_배송순서완성.xlsx
 *_배송순서완성.csv
 _test/
-
-# 체크포인트
-time_matrix.json
-time_matrix_checkpoint.json

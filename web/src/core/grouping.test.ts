@@ -1,8 +1,12 @@
 /**
- * grouping.test.ts — 1차 그룹핑·2차 클러스터링이 Python `optimizer.py`와 같은지 검증.
+ * grouping.test.ts — 1차 그룹핑·2차 클러스터링이 원본 데스크톱 앱(Python `optimizer.py`)과
+ * 같은지 검증.
  *
- * fixture는 `scripts/gen_fixtures.py`가 `_build_location_groups` /
- * `_build_secondary_clusters`를 직접 돌려 떠낸 결과다(합성 좌표 15건, 임계값 200·400m).
+ * fixture는 Python의 `_build_location_groups` / `_build_secondary_clusters`를 직접 돌려
+ * 떠낸 결과다(합성 좌표 15건, 임계값 200·400m).
+ *
+ * fixture는 더 이상 생성할 수 없다(원본 Python 앱은 v3.4.0, 커밋 158d81b를 끝으로 제거됐다).
+ * 고정된 참조 데이터로 두고, 이 파일이 깨지면 이식 규칙이 바뀐 것이므로 의도한 변경인지 확인할 것.
  */
 
 import { describe, expect, test } from 'vitest';

@@ -1,5 +1,5 @@
 /**
- * 카카오 로컬 API 래퍼 — `src/core/geocoder.py` 이식.
+ * 카카오 로컬 API 래퍼 — 데스크톱판 `geocoder.py` 이식.
  *   - geocode        : 주소 → 위도/경도
  *   - reverseGeocode : 위도/경도 → 도로명 주소
  *

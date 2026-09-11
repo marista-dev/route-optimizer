@@ -1,7 +1,6 @@
 # 배송 경로 최적화 (Web)
 
-Python + tkinter 데스크톱 앱을 GitHub Pages 정적 사이트로 옮긴 버전.
-설계·이식 계획은 저장소 루트의 `docs/web-migration-plan.md`를 본다.
+저장소 루트의 [README](../README.md)에 사용법과 구조 설명이 있다. 이 문서는 개발 명령만 다룬다.
 
 ## 로컬 실행
 
@@ -19,7 +18,8 @@ npm run dev                  # http://localhost:5173
 | 명령 | 설명 |
 |---|---|
 | `npm run dev` | 개발 서버 |
-| `npm run build` | 타입체크 + 프로덕션 빌드 (`dist/`) |
+| `npm run typecheck` | 타입 검사 (`tsc -b --force`). `tsc --noEmit -p .`는 아무것도 검사하지 않으니 쓰지 말 것 |
+| `npm run build` | 타입 검사 + 프로덕션 빌드 (`dist/`) |
 | `npm test` | vitest 1회 실행 |
 | `npm run test:watch` | vitest 감시 모드 |
 | `npm run lint` | oxlint |
