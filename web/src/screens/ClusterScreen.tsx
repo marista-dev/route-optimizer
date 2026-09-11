@@ -1,11 +1,21 @@
 import { useCallback, useMemo, useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 
 import { MapFit, SidePanel } from '../components';
 import { buildClusters, buildPrimaryGroups } from '../core';
 import { ClusterLayer, MapCanvas, MarkerLayer } from '../map';
 import { useSessionStore } from '../store/session';
-import type { LatLng } from '../types';
+import { DEFAULT_THRESHOLD_M, type LatLng } from '../types';
 import { escapeHtml, groupBuildingLabel, sameClustering } from './helpers';
+
+/*
+ * 임계값 슬라이더의 범위. 500m를 넘으면 멀리 떨어진 동네까지 한 덩어리로 묶여
+ * 클러스터 순서를 사람이 정한다는 전제가 무너지므로 위를 500m로 막았다.
+ * 10m 단위로 움직여야 경계에 걸친 동을 붙이거나 뗄 수 있다.
+ */
+const MIN_THRESHOLD_M = 200;
+const MAX_THRESHOLD_M = 500;
+const THRESHOLD_STEP_M = 10;
 
 /** S3 클러스터링 — 임계값 슬라이더 + 다각형 미리보기. */
 export function ClusterScreen() {
@@ -17,7 +27,10 @@ export function ClusterScreen() {
   const setStep = useSessionStore((s) => s.setStep);
 
   // 슬라이더는 즉시 반응해야 하므로 로컬 상태로 두고, 다음 단계로 넘어갈 때 스토어에 넣는다.
-  const [thresholdM, setLocalThreshold] = useState(storedThreshold);
+  // 예전 세션이 500m를 넘는 값을 들고 있을 수 있어 범위 안으로 잘라서 시작한다.
+  const [thresholdM, setLocalThreshold] = useState(() =>
+    Math.min(Math.max(storedThreshold, MIN_THRESHOLD_M), MAX_THRESHOLD_M),
+  );
 
   const groups = useMemo(() => buildPrimaryGroups(nodes), [nodes]);
   const clusters = useMemo(() => buildClusters(groups, thresholdM), [groups, thresholdM]);
@@ -105,7 +118,8 @@ export function ClusterScreen() {
               setStep(4);
             }}
           >
-            순서배정 →
+            순서배정
+            <ArrowRight size={18} />
           </button>
         }
       >
@@ -119,17 +133,17 @@ export function ClusterScreen() {
           <input
             className="ro-range"
             type="range"
-            min={200}
-            max={1000}
-            step={50}
+            min={MIN_THRESHOLD_M}
+            max={MAX_THRESHOLD_M}
+            step={THRESHOLD_STEP_M}
             value={thresholdM}
             aria-label="2차 클러스터 임계값(m)"
             onChange={(e) => setLocalThreshold(Number(e.target.value))}
           />
           <div className="ro-range-scale">
-            <span>200m</span>
-            <span>기본 400m</span>
-            <span>1000m</span>
+            <span>{MIN_THRESHOLD_M}m</span>
+            <span>기본 {DEFAULT_THRESHOLD_M}m</span>
+            <span>{MAX_THRESHOLD_M}m</span>
           </div>
         </div>
 
