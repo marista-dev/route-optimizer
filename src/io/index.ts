@@ -8,11 +8,10 @@ export {
   OUTPUT_SUFFIX,
   REVERSE_ADDR_COLUMN,
   VERDICT_COLUMN,
-  buildCsv,
   buildOrderMap,
   buildXlsx,
   buildXlsxFromRecords,
   downloadBlob,
   outputFileName,
 } from './writeFile';
-export type { CsvInput } from './writeFile';
+export type { RecordsInput } from './writeFile';

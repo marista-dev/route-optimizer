@@ -14,7 +14,7 @@ export interface RateLimitModalProps {
   onRetry: (newKey: string) => void;
   /** 남은 칸을 Haversine 추정치로 채우고 계속 */
   onFallback: () => void;
-  /** 닫기 */
+  /** 명시적 닫기. 닫은 뒤에도 같은 선택지를 다시 열 수 있어야 한다 */
   onClose: () => void;
 }
 
@@ -29,8 +29,13 @@ export function RateLimitModal({
 }: RateLimitModalProps) {
   const [key, setKey] = useState('');
 
+  /*
+   * Esc·배경 클릭으로 닫지 않는다(`sticky`). 이 모달을 실수로 닫으면 세 선택지를
+   * 다시 띄울 방법이 한도에 또 걸리는 것뿐이고, 그 재시도는 쌍당 최대 90초가 걸린다.
+   * 대신 아래에 명시적 닫기를 두었다 — 닫아도 패널 배너에서 다시 열 수 있다.
+   */
   return (
-    <Modal onClose={onClose} compact>
+    <Modal onClose={onClose} compact sticky>
       <div className="ro-alert">
         <div className="ro-alert__icon">!</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -48,11 +53,17 @@ export function RateLimitModal({
         </span>
         <span>실패 셀은 Haversine으로 대체 가능</span>
       </div>
+      <div className="ro-hint">
+        키를 바꾸지 않고 그냥 다시 호출하면 쌍당 최대 90초를 기다린 뒤 실패합니다.
+      </div>
       <div className="ro-field">
         <span className="ro-label">새 REST API 키</span>
         <KeyInput value={key} onChange={setKey} autoFocus />
       </div>
-      <div className="ro-row" style={{ justifyContent: 'flex-end' }}>
+      <div className="ro-row" style={{ justifyContent: 'space-between' }}>
+        <button type="button" className="ro-btn ro-btn--quiet" onClick={onClose}>
+          닫기
+        </button>
         <button type="button" className="ro-btn ro-btn--quiet" onClick={onFallback}>
           Haversine으로 계속
         </button>

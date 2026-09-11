@@ -1,12 +1,10 @@
 /**
  * 결과 파일 생성 — 데스크톱판 `app.py`의 `_save_xlsx` 이식.
  *
- * - xlsx: 원본 워크북을 다시 읽어 대상 시트 1열에 '배송순서'를 끼워 넣고
- *         (이미 있으면 값을 지우고 덮어씀) 순번대로 행을 정렬한다.
- *         SheetJS CE는 셀 서식을 보존하지 못한다(계획 12절).
- * - csv : 원본 열 + 좌표·검증 열을 모두 싣고 '배송순서'를 맨 앞에 둔다. UTF-8 BOM.
+ * 산출물은 xlsx 하나뿐이다. 원본 워크북이 있으면 그 시트 1열에 '배송순서'를 끼워 넣고
+ * (이미 있으면 값을 지우고 덮어씀) 순번대로 행을 정렬한다. 원본 바이트가 없으면
+ * 결과 표만으로 새 워크북을 짠다. SheetJS CE는 셀 서식을 보존하지 못한다(계획 12절).
  */
-import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
 import type { Node, Row } from '../types';
@@ -23,7 +21,7 @@ export const VERDICT_COLUMN = '주소검증결과';
 export const OUTPUT_SUFFIX = '_배송순서완성';
 
 /** 업로드 파일명에서 결과 파일명을 만든다. */
-export function outputFileName(fileName: string, extension: 'xlsx' | 'csv'): string {
+export function outputFileName(fileName: string, extension: 'xlsx'): string {
   const base = fileName.replace(/\.[^./\\]+$/, '') || 'result';
   return `${base}${OUTPUT_SUFFIX}.${extension}`;
 }
@@ -42,8 +40,8 @@ export function buildOrderMap(nodes: readonly Node[], finalOrder: readonly numbe
   return map;
 }
 
-// ── CSV ─────────────────────────────────────────────────────────────────────
-export interface CsvInput {
+// ── 결과 표 ─────────────────────────────────────────────────────────────────
+export interface RecordsInput {
   /** 원본 헤더(열 순서 보존) */
   headers: readonly string[];
   /** 원본 행 */
@@ -64,22 +62,18 @@ const EXTRA_COLUMNS = [
 ] as const;
 
 /**
- * 결과 표를 만든다. CSV와 "원본 없이 만드는 xlsx"가 같은 열·같은 값을 쓰도록
- * 조립을 한곳에 모았다.
+ * 결과 표를 만든다. "원본 없이 만드는 xlsx"가 쓰는 조립기다.
  *
  * 열 구성: 배송순서 → 원본 열 전부 → 원본에 없던 좌표·검증 열.
  * 원본 열은 하나도 버리지 않는다 — 주소·연락처처럼 앱이 직접 쓰지 않는 열도
  * 그대로 실려야 현장에서 쓸 수 있다. 원본이 이미 결과 파일이어서 Latitude 등을
  * 갖고 있으면 **원래 자리에** 두고 값만 새로 쓴다(데스크톱판과 같은 규칙).
  *
- * @param includeUnordered 순번이 없는 행(지오코딩 실패 등)도 뒤에 붙인다.
- *   CSV는 데스크톱판과 같이 제외하고, xlsx는 원본을 통째로 보존하므로 포함한다.
- *   이 구분이 없으면 같은 "엑셀" 버튼이 원본 유무에 따라 다른 행 수를 뱉는다.
+ * 순번이 없는 행(지오코딩 실패 등)도 뒤에 남긴다. 원본 워크북 경로(`buildXlsx`)가
+ * 원본 행을 통째로 보존하므로, 여기서 버리면 같은 "엑셀" 버튼이 원본 유무에 따라
+ * 사람을 빠뜨린다.
  */
-export function buildRecords(
-  input: CsvInput,
-  includeUnordered = false,
-): {
+export function buildRecords(input: RecordsInput): {
   columns: string[];
   records: Record<string, unknown>[];
 } {
@@ -115,21 +109,10 @@ export function buildRecords(
     .map(toRecord)
     .sort((a, b) => (a[ORDER_COLUMN] as number) - (b[ORDER_COLUMN] as number));
 
-  if (!includeUnordered) return { columns, records: ordered };
-
   // 순번 없는 행은 원래 순서를 지켜 뒤에 붙인다(파이썬 `_row_sort_key`와 같은 규칙).
   const rest = rows.filter((row) => !orderByRow.has(row.rowIndex)).map(toRecord);
-  const records = [...ordered, ...rest];
 
-  return { columns, records };
-}
-
-export function buildCsv(input: CsvInput): Blob {
-  const { columns, records } = buildRecords(input);
-
-  const csv = Papa.unparse(records, { columns });
-  // 엑셀이 한글을 깨지 않게 UTF-8 BOM을 붙인다(pandas `encoding='utf-8-sig'`와 동일).
-  return new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8;' });
+  return { columns, records: [...ordered, ...rest] };
 }
 
 // ── xlsx ────────────────────────────────────────────────────────────────────
@@ -226,14 +209,12 @@ export function buildXlsx(
  * 원본 파일 없이 결과만으로 xlsx Blob을 만든다.
  *
  * 원본 바이트는 메모리에만 있어(localStorage에 못 담는다) 새로고침하면 사라진다.
- * 그때도 xlsx를 받을 수 있어야 하므로 CSV와 **같은 열·같은 값**으로 시트를 짠다.
+ * 그때도 xlsx를 받을 수 있어야 하므로 결과 표만으로 시트를 짠다.
  * 원본 열은 전부 살리고, 좌표·검증 열만 뒤에 덧붙는다.
  * 원본 워크북의 서식은 재현하지 못한다(값만 옮긴다).
  */
-export function buildXlsxFromRecords(input: CsvInput, sheetName = '배송순서'): Blob {
-  // 원본 워크북 경로(`buildXlsx`)는 순번 없는 행도 뒤에 남긴다. 같은 버튼이
-  // 원본 유무에 따라 사람을 빠뜨리면 안 되므로 여기서도 똑같이 포함한다.
-  const { columns, records } = buildRecords(input, true);
+export function buildXlsxFromRecords(input: RecordsInput, sheetName = '배송순서'): Blob {
+  const { columns, records } = buildRecords(input);
   const aoa: unknown[][] = [
     columns,
     ...records.map((r) => columns.map((c) => r[c] ?? '')),

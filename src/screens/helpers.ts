@@ -50,18 +50,6 @@ export function seedsFromRows(rows: readonly Row[], addressColumn: string | null
   }));
 }
 
-/**
- * 미수정으로 남은 경고 건수.
- * 좌표가 있으면서 판정이 `일치`·`수정됨`이 아닌 행 + 좌표를 못 얻은 `위치없음` 행.
- */
-export function computeWarnCount(nodes: readonly Node[]): number {
-  let count = 0;
-  for (const node of nodes) {
-    if (node.verdict === '위치없음') count += 1;
-    else if (node.lat !== null && node.verdict !== '일치' && node.verdict !== '수정됨') count += 1;
-  }
-  return count;
-}
 
 /** 판정 필터·`verdictCounts`에서 "전체"를 뜻하는 값. */
 export const ALL_VERDICTS = '전체' as const;

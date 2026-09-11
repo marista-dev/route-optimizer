@@ -5,7 +5,6 @@ import {
   buildPostcodeAddress,
   clusterOfNode,
   columnLetter,
-  computeWarnCount,
   emptyAddressCount,
   escapeHtml,
   fullPathPoints,
@@ -58,7 +57,7 @@ describe('seedsFromRows', () => {
   });
 });
 
-describe('computeWarnCount / verdictCounts', () => {
+describe('verdictCounts', () => {
   const nodes = [
     node(0, '일치'),
     node(1, '수정됨'),
@@ -66,14 +65,6 @@ describe('computeWarnCount / verdictCounts', () => {
     node(3, '확인불가'),
     node(4, '위치없음', false),
   ];
-
-  it('일치·수정됨을 뺀 나머지를 센다', () => {
-    expect(computeWarnCount(nodes)).toBe(3);
-  });
-
-  it('좌표 없는 일치 행은 세지 않는다', () => {
-    expect(computeWarnCount([node(0, '일치', false)])).toBe(0);
-  });
 
   it('판정별 건수를 센다', () => {
     expect(verdictCounts(nodes)).toEqual({

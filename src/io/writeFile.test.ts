@@ -2,13 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 
 import type { Node, Row } from '../types';
-import {
-  buildCsv,
-  buildOrderMap,
-  buildXlsx,
-  buildXlsxFromRecords,
-  outputFileName,
-} from './writeFile';
+import { buildOrderMap, buildXlsx, buildXlsxFromRecords, outputFileName } from './writeFile';
 
 /** 모든 데이터는 합성값이다. */
 const ADDRESS_HEADER = '택배받을 주소 (도로명)';
@@ -54,7 +48,7 @@ function node(id: number, rowIndex: number, over: Partial<Node> = {}): Node {
 describe('outputFileName', () => {
   it('확장자를 갈아끼우고 접미사를 붙인다', () => {
     expect(outputFileName('배송목록.xlsx', 'xlsx')).toBe('배송목록_배송순서완성.xlsx');
-    expect(outputFileName('배송목록.csv', 'csv')).toBe('배송목록_배송순서완성.csv');
+    expect(outputFileName('배송목록.csv', 'xlsx')).toBe('배송목록_배송순서완성.xlsx');
   });
 });
 
@@ -115,7 +109,7 @@ describe('buildXlsx', () => {
   });
 });
 
-describe('buildCsv', () => {
+describe('buildXlsxFromRecords — 열과 값', () => {
   const rows: Row[] = BODY.map((cells, rowIndex) => ({
     rowIndex,
     이름: cells[0],
@@ -124,40 +118,24 @@ describe('buildCsv', () => {
   }));
   const nodes = [node(0, 0), node(1, 1), node(2, 3)];
 
-  it('BOM으로 시작하고 배송순서가 첫 열이다', async () => {
-    const blob = buildCsv({ headers: HEADERS, rows, nodes, finalOrder: [2, 0, 1] });
+  it('배송순서가 첫 열이고 좌표·검증 열이 뒤에 붙는다', async () => {
+    const blob = buildXlsxFromRecords({ headers: HEADERS, rows, nodes, finalOrder: [2, 0, 1] });
+    const aoa = readBack(await blob.arrayBuffer(), '배송순서');
 
-    // Blob.text()는 BOM을 먹어버리므로 바이트로 확인한다.
-    const head = new Uint8Array(await blob.arrayBuffer()).slice(0, 3);
-    expect(Array.from(head)).toEqual([0xef, 0xbb, 0xbf]);
-
-    const lines = (await blob.text()).trim().split(/\r?\n/);
-    expect(lines[0]).toBe(
-      ['배송순서', ...HEADERS, 'Latitude', 'Longitude', '카카오_확인주소', '역지오코딩_주소', '주소검증결과'].join(','),
-    );
-  });
-
-  it('순번이 있는 행만 순번 오름차순으로 담는다', async () => {
-    const text = await buildCsv({ headers: HEADERS, rows, nodes, finalOrder: [2, 0] }).text();
-    const lines = text.trim().split(/\r?\n/);
-
-    expect(lines).toHaveLength(3);
-    expect(lines[1].startsWith('1,차카타,')).toBe(true);
-    expect(lines[2].startsWith('2,가나다,')).toBe(true);
+    expect(aoa[0]).toEqual([
+      '배송순서', ...HEADERS,
+      'Latitude', 'Longitude', '카카오_확인주소', '역지오코딩_주소', '주소검증결과',
+    ]);
   });
 
   it('좌표와 검증 정보를 노드에서 가져온다', async () => {
     const custom = [node(0, 0, { lat: null, lon: null, verdict: '위치없음', reverseAddr: '' })];
-    const text = await buildCsv({
-      headers: HEADERS,
-      rows,
-      nodes: custom,
-      finalOrder: [0],
-    }).text();
-    const cells = text.trim().split(/\r?\n/)[1].split(',');
+    const blob = buildXlsxFromRecords({ headers: HEADERS, rows, nodes: custom, finalOrder: [0] });
+    const aoa = readBack(await blob.arrayBuffer(), '배송순서');
+    const header = aoa[0] as string[];
 
-    expect(cells[cells.length - 1]).toBe('위치없음');
-    expect(cells[cells.length - 5]).toBe('');
+    expect(aoa[1][header.indexOf('주소검증결과')]).toBe('위치없음');
+    expect(aoa[1][header.indexOf('Latitude')]).toBe('');
   });
 });
 
@@ -212,7 +190,7 @@ describe('buildXlsx — CSV 원본(H4)', () => {
 });
 
 // ── LOW 11: 원본에 이미 있는 좌표·검증 열은 제자리에서 덮어쓴다 ─────────────
-describe('buildCsv — 이미 결과 열이 있는 원본', () => {
+describe('buildXlsxFromRecords — 이미 결과 열이 있는 원본', () => {
   const RESULT_HEADERS = [
     '배송순서', '이름', ADDRESS_HEADER, 'Latitude', 'Longitude', '연락처',
     '카카오_확인주소', '역지오코딩_주소', '주소검증결과',
@@ -232,51 +210,43 @@ describe('buildCsv — 이미 결과 열이 있는 원본', () => {
     },
   ];
 
-  it('중복 열을 뒤에 덧붙이지 않고 원래 자리를 지킨다', async () => {
-    const text = await buildCsv({
-      headers: RESULT_HEADERS,
-      rows,
+  async function headerAndRow(headers: readonly string[], input: Row[]): Promise<unknown[][]> {
+    const blob = buildXlsxFromRecords({
+      headers,
+      rows: input,
       nodes: [node(0, 0)],
       finalOrder: [0],
-    }).text();
-    const lines = text.trim().split(/\r?\n/);
+    });
+    return readBack(await blob.arrayBuffer(), '배송순서');
+  }
 
-    expect(lines[0].split(',')).toEqual([
-      '배송순서', '이름', ADDRESS_HEADER, 'Latitude', 'Longitude', '연락처',
-      '카카오_확인주소', '역지오코딩_주소', '주소검증결과',
-    ]);
+  it('중복 열을 뒤에 덧붙이지 않고 원래 자리를 지킨다', async () => {
+    const aoa = await headerAndRow(RESULT_HEADERS, rows);
+
+    expect(aoa[0]).toEqual(RESULT_HEADERS);
     // 이름이 한 번씩만 나온다
-    const names = lines[0].split(',');
+    const names = aoa[0] as string[];
     expect(new Set(names).size).toBe(names.length);
   });
 
   it('제자리 열의 값은 노드 값으로 새로 쓴다', async () => {
-    const text = await buildCsv({
-      headers: RESULT_HEADERS,
-      rows,
-      nodes: [node(0, 0)],
-      finalOrder: [0],
-    }).text();
-    const cells = text.trim().split(/\r?\n/)[1].split(',');
+    const cells = (await headerAndRow(RESULT_HEADERS, rows))[1];
 
-    expect(cells[0]).toBe('1');           // 옛 배송순서 9를 덮어씀
-    expect(cells[3]).toBe('35');          // Latitude ← node(0).lat
-    expect(cells[4]).toBe('126');         // Longitude ← node(0).lon
+    expect(cells[0]).toBe(1);             // 옛 배송순서 9를 덮어씀
+    expect(cells[3]).toBe(35);            // Latitude ← node(0).lat
+    expect(cells[4]).toBe(126);           // Longitude ← node(0).lon
     expect(cells[6]).toBe('카카오주소0');
     expect(cells[7]).toBe('역주소0');
     expect(cells[8]).toBe('일치');
   });
 
   it('일부만 있으면 없는 것만 뒤에 붙인다', async () => {
-    const text = await buildCsv({
-      headers: ['이름', ADDRESS_HEADER, '주소검증결과'],
-      rows: [{ rowIndex: 0, 이름: '가나다', [ADDRESS_HEADER]: 'x', 주소검증결과: '옛값' }],
-      nodes: [node(0, 0)],
-      finalOrder: [0],
-    }).text();
-    const header = text.trim().split(/\r?\n/)[0].split(',');
+    const aoa = await headerAndRow(
+      ['이름', ADDRESS_HEADER, '주소검증결과'],
+      [{ rowIndex: 0, 이름: '가나다', [ADDRESS_HEADER]: 'x', 주소검증결과: '옛값' }],
+    );
 
-    expect(header).toEqual([
+    expect(aoa[0]).toEqual([
       '배송순서', '이름', ADDRESS_HEADER, '주소검증결과',
       'Latitude', 'Longitude', '카카오_확인주소', '역지오코딩_주소',
     ]);
@@ -355,13 +325,5 @@ describe('xlsx 두 경로가 같은 행 집합을 낸다', () => {
     // 순번 있는 3건이 먼저, 순번 없는 '사아자'가 마지막.
     expect(names[names.length - 1]).toBe('사아자');
     expect(names).toContain('사아자');
-  });
-
-  it('CSV는 데스크톱판과 같이 순번 있는 행만 담는다', async () => {
-    const lines = (await buildCsv({ headers: HEADERS, rows, nodes, finalOrder }).text())
-      .trim()
-      .split(/\r?\n/);
-    expect(lines.length - 1).toBe(3);
-    expect(lines.join('\n')).not.toContain('사아자');
   });
 });
