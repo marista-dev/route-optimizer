@@ -1,0 +1,302 @@
+/* 지도 레이어가 만드는 CustomOverlay/컨테이너 전용 최소 스타일. */
+
+.ro-map {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.ro-map__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.ro-map__error {
+  padding: 16px;
+  color: #dc2626;
+}
+
+/* 클러스터 hover 라벨: 커서를 따라다닌다. */
+.ro-cluster-label {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(22, 26, 34, 0.92);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/*
+ * S4의 방문 순번 — 도형 없이 숫자만 크게 얹는다.
+ * 색은 세 가지를 동시에 피해야 한다: 다각형 채움(#1E4ED8), 확정 초록(#16A34A),
+ * 그리고 카카오맵의 노란 도로. 주황은 노란 도로 위에서 묻혀 진한 자주로 바꿨다.
+ * 밝기 차이가 커서(노란 도로 대비 약 7:1) 도로·녹지·건물 어디에 얹혀도 읽힌다.
+ * 흰 외곽선은 2px 8방향으로 둘러 지도 글자와 섞이지 않게 한다.
+ * 숫자 세로 정렬은 index.css의 배지 규칙과 같은 이유로 시스템 폰트 + line-height 1.
+ */
+.ro-cluster-order {
+  color: #a21456;
+  font-family: system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-shadow:
+    -2px -2px 0 #fff,
+    0 -2px 0 #fff,
+    2px -2px 0 #fff,
+    2px 0 0 #fff,
+    2px 2px 0 #fff,
+    0 2px 0 #fff,
+    -2px 2px 0 #fff,
+    -2px 0 0 #fff,
+    0 2px 5px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+/* 1차 그룹 마커 배지. */
+.ro-marker {
+  font-family: system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  border: 2px solid #fff;
+  background: #1e4ed8;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * 순번이 적힌 마커(S6 배송순서) — 초록 동그라미.
+ * 지도를 가득 채우는 마커라 채도가 높은 빨강은 오래 보기 힘들다.
+ * "다 끝난 결과"라는 뜻과도 맞고, 결과 화면에는 다른 초록 요소가 없어 헷갈리지 않는다.
+ * 크기는 자릿수에 따라 늘어난다(한 자리는 정원, 세 자리는 알약 모양).
+ */
+.ro-marker.is-order {
+  background: #16a34a;
+  /* 정원 유지: 가로는 늘리지 않고 자릿수에 따라 지름 자체를 키운다.
+     padding을 주면 두 자리부터 타원이 된다. */
+  padding: 0;
+  border-radius: 50%;
+  font-weight: 800;
+  border-width: 2.5px;
+  box-shadow:
+    0 0 0 1px rgba(22, 163, 74, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+/* 자릿수별 지름. 숫자가 길수록 원을 키워 글자가 눌리지 않게 한다. */
+.ro-marker.is-order-1 {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  font-size: 13px;
+}
+.ro-marker.is-order-2 {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  font-size: 13px;
+}
+.ro-marker.is-order-3 {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  font-size: 13.5px;
+  letter-spacing: -0.5px;
+}
+
+/*
+ * 표에서 그 행을 가리키면 지도 위 동그라미가 커진다.
+ * 색은 초록 그대로 두고 크기와 링으로만 알린다 — 색까지 바꾸면
+ * 중복 건수 배지나 다른 상태색과 헷갈린다.
+ */
+.ro-marker.is-order.is-highlight {
+  background: #16a34a;
+  transform: scale(1.45);
+  box-shadow:
+    0 0 0 4px rgba(22, 163, 74, 0.28),
+    0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * 진입·이탈 마커 — 색만으로는 "고른 상태"가 눈에 안 들어온다는 피드백을 반영해
+ * 마커 자체를 키우고, 머리 위에 말풍선 꼬리가 달린 라벨(↓ 진입 / ↑ 이탈)을 붙인다.
+ * 라벨은 ::after, 꼬리는 ::before(마커의 투명 halo와 겸용)로 만들어 DOM은 그대로 둔다.
+ */
+.ro-marker.is-entry,
+.ro-marker.is-exit {
+  transform: scale(1.15);
+  color: #fff;
+  z-index: 1;
+}
+.ro-marker.is-entry {
+  background: #16a34a;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 5px #16a34a,
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.ro-marker.is-exit {
+  background: #dc2626;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 5px #dc2626,
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* 머리 위 라벨. 지도 어디에 놓여도 읽히도록 채운 배경 + 흰 테두리를 준다. */
+.ro-marker.is-entry::after,
+.ro-marker.is-exit::after {
+  position: absolute;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+.ro-marker.is-entry::after {
+  content: '↓ 진입';
+  background: #16a34a;
+}
+.ro-marker.is-exit::after {
+  content: '↑ 이탈';
+  background: #dc2626;
+}
+/* 진입·이탈이 같은 건물이면 한 줄로 합쳐 보여 준다. */
+.ro-marker.is-entry.is-exit {
+  background: #16a34a;
+  box-shadow:
+    0 0 0 3px #fff,
+    0 0 0 5px #16a34a,
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.ro-marker.is-entry.is-exit::after {
+  content: '진입 · 이탈';
+  background: #161a22;
+}
+
+/*
+ * 같은 건물에 여러 건이 있을 때 붙는 건수 배지.
+ * 채운 검정이면 hover 강조색과 똑같아 보여 "지금 가리킨 마커"와 구별되지 않았다.
+ * 흰 바탕 + 진한 테두리로 바꿔 상태색이 아니라 "수"로 읽히게 한다.
+ */
+.ro-marker__count {
+  position: absolute;
+  top: -9px;
+  right: -11px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1.5px solid #161a22;
+  color: #161a22;
+  font-weight: 700;
+  font-size: 10px;
+  line-height: 13px;
+}
+
+/* 출발지 마커. */
+.ro-origin {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 2px solid #fff;
+  background: #161a22;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * 클러스터 중심 클릭 타깃.
+ * 1건짜리 클러스터의 다각형은 실사용 배율에서 10px 안팎이라 클릭이 빗나간다.
+ * 배율과 무관한 44px 투명 원을 중심에 얹어 "근처를 찍어도" 선택되게 한다.
+ */
+.ro-cluster-hit {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 마커도 같은 이유로 실제 배지보다 넓은 영역에서 클릭을 받는다(S5 진입·이탈). */
+.ro-marker::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 16px;
+}
+
+/* S6에서 표 행에 호버했을 때 강조되는 마커. */
+/* 순번이 없는 마커의 강조. 건수 배지(흰 바탕 검정 테두리)와 겹치지 않는 색을 쓴다. */
+.ro-marker.is-highlight {
+  background: #6d28d9;
+  transform: scale(1.3);
+  box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.28);
+}
+
+/* S6 강조 마커 옆 라벨 — 배송순서 + 건물 이름. */
+.ro-marker-label {
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(22, 26, 34, 0.92);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* S5 이전/다음 클러스터 참고점. 클릭되지 않는다. */
+.ro-refpoint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 2px solid #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.ro-refpoint--prev {
+  background: #16a34a;
+  color: #fff;
+}
+
+/* 다음 클러스터 — 다각형과 같은 빨강으로 맞춘다. */
+.ro-refpoint--next {
+  background: #fff;
+  color: #dc2626;
+  border-color: #dc2626;
+}
