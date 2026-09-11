@@ -1,0 +1,1583 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * 디자인 토큰 + 공용 클래스.
+ * Claude Design 핸드오프의 인라인 스타일을 클래스로 옮긴 것이다.
+ * 색·간격·반경·타이포는 그대로 따랐다.
+ * 지도 레이어 전용 스타일은 `src/map/map.css`에 있다.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --bg: #eef0f3;
+  --surface: #fff;
+  --surface-2: #f7f8fa;
+  --surface-3: #fafbfc;
+  --border: #dce0e6;
+  --border-soft: #eef0f3;
+  --border-strong: #b7bec9;
+  --primary: #1e4ed8;
+  --primary-hover: #1a44be;
+  --primary-tint: #eef2fc;
+  --primary-tint-2: #f3f6fd;
+  --primary-line: #c7d2f5;
+  --text: #161a22;
+  --muted: #5b6370;
+  --faint: #9aa1ac;
+  --disabled: #b7bec9;
+  --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --success: #16a34a;
+  --success-fg: #15803d;
+  --success-bg: #eaf7ee;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --info-fg: #3730a3;
+  --info-bg: #e0e7ff;
+  --track: #e6e9ee;
+
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-panel: 10px;
+  --header-h: 56px;
+  --shadow-panel: 0 6px 24px rgba(0, 0, 0, 0.14);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.3);
+
+  font-family: 'Noto Sans KR', system-ui, 'Apple SD Gothic Neo', sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--primary);
+}
+a:hover {
+  color: var(--primary-hover);
+}
+
+input::placeholder {
+  color: var(--faint);
+}
+
+@keyframes ro-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.ro-mono {
+  font-family: ui-monospace, Menlo, monospace;
+}
+.ro-num {
+  font-variant-numeric: tabular-nums;
+}
+.ro-muted {
+  color: var(--muted);
+}
+.ro-faint {
+  color: var(--faint);
+}
+.ro-warn-text {
+  color: var(--warn);
+}
+
+/* ── 앱 껍데기 ─────────────────────────────────────────────────────────── */
+.ro-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.ro-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 헤더 + 스테퍼 ─────────────────────────────────────────────────────── */
+.ro-header {
+  height: var(--header-h);
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 28px;
+  position: relative;
+  z-index: 20;
+}
+
+.ro-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.ro-brand__logo {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.ro-brand__name {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.ro-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ro-stepper__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ro-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--faint);
+  cursor: default;
+}
+.ro-step:enabled {
+  cursor: pointer;
+}
+.ro-step__dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: #fff;
+  color: var(--faint);
+  border: 1.5px solid var(--border);
+}
+.ro-step.is-done {
+  color: var(--text);
+}
+.ro-step.is-done .ro-step__dot {
+  background: var(--text);
+  color: #fff;
+  border-color: var(--text);
+}
+.ro-step.is-current {
+  background: var(--primary-tint);
+  color: var(--primary);
+  font-weight: 700;
+}
+.ro-step.is-current .ro-step__dot {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.ro-stepper__line {
+  width: 22px;
+  height: 1px;
+  background: var(--border);
+}
+
+.ro-headchips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+  justify-content: flex-end;
+}
+.ro-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ro-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.ro-chip.is-on {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+.ro-chip.is-on .ro-chip__dot {
+  background: var(--success);
+}
+
+/* ── 버튼 ──────────────────────────────────────────────────────────────── */
+.ro-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ro-btn:disabled {
+  cursor: not-allowed;
+}
+.ro-btn--primary {
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 500;
+}
+.ro-btn--primary:hover:enabled {
+  background: var(--primary-hover);
+}
+.ro-btn--primary:disabled {
+  background: var(--disabled);
+  color: #fff;
+}
+.ro-btn--dark {
+  border: 0;
+  background: var(--text);
+  color: #fff;
+  font-weight: 500;
+}
+.ro-btn--outline {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 500;
+}
+.ro-btn--soft {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.ro-btn--quiet {
+  color: var(--muted);
+}
+.ro-btn--danger {
+  color: var(--danger);
+}
+.ro-btn--danger-outline {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+/* 아직 할 일이 남았다는 뜻의 버튼. 비활성처럼 보이면 안 된다 — 눌러야 위치를 알려준다. */
+.ro-btn--warn {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+  color: var(--warn);
+  font-weight: 700;
+}
+.ro-btn--warn:hover:enabled {
+  background: var(--warn);
+  color: #fff;
+}
+.ro-btn--lg {
+  height: 40px;
+  padding: 0 20px;
+  font-size: 14px;
+}
+.ro-btn--md {
+  height: 38px;
+}
+.ro-btn--sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.ro-btn--xs {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.ro-btn--block {
+  width: 100%;
+}
+.ro-btn--grow {
+  flex: 1;
+}
+.ro-btn__sub {
+  opacity: 0.8;
+  font-weight: 400;
+}
+
+/* ── 폼 ────────────────────────────────────────────────────────────────── */
+.ro-input {
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  background: #fff;
+  color: var(--text);
+  min-width: 0;
+}
+.ro-input:focus {
+  border-color: var(--primary);
+}
+.ro-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ro-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.ro-range {
+  width: 100%;
+  accent-color: var(--primary);
+}
+.ro-range-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ── 카드 · 패널 ───────────────────────────────────────────────────────── */
+.ro-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ro-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.ro-card__title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ro-card__note {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ro-panel {
+  position: absolute;
+  background: var(--surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  overflow: hidden;
+  max-height: calc(100% - 32px);
+}
+.ro-panel--right {
+  top: 16px;
+  right: 16px;
+}
+.ro-panel__head {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
+.ro-panel__title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ro-panel__titlerow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.ro-panel__body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+.ro-panel__scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.ro-panel__foot {
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+.ro-row {
+  display: flex;
+  gap: 8px;
+}
+.ro-row--center {
+  align-items: center;
+}
+
+.ro-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.ro-stat {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+.ro-stat__label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ro-stat__value {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ro-legend {
+  display: flex;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.ro-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ro-legend__marker {
+  /* 지도 마커(map.css .ro-marker)와 같은 배색: 파란 배지 + 흰 테두리 */
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 1.5px solid #fff;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.ro-legend__poly {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: rgba(30, 78, 216, 0.15);
+  border: 1px solid var(--primary);
+}
+
+.ro-hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.ro-hint--small {
+  font-size: 11.5px;
+}
+
+/* ── 진행률 ────────────────────────────────────────────────────────────── */
+.ro-progress {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ro-progress__head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  gap: 8px;
+}
+.ro-progress__label {
+  font-weight: 500;
+}
+.ro-progress__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+.ro-progress__track--thin {
+  height: 4px;
+  border-radius: 2px;
+}
+.ro-progress__fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.2s;
+}
+.ro-progress__fill--muted {
+  background: var(--muted);
+}
+.ro-progress__fill--ok {
+  background: var(--success);
+}
+
+/* ── 표 ────────────────────────────────────────────────────────────────── */
+.ro-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  background: var(--surface);
+}
+.ro-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.ro-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ro-table tbody tr {
+  background: var(--surface);
+}
+.ro-table tbody tr.is-missing {
+  background: #fff8f8;
+}
+.ro-table tbody tr.is-check {
+  background: #fffdf5;
+}
+.ro-table tbody tr.is-odd {
+  background: var(--surface-3);
+}
+.ro-table .ro-td--right {
+  text-align: right;
+}
+.ro-table .ro-td--name {
+  font-weight: 500;
+}
+.ro-table .ro-td--idx {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.ro-table__empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 12px;
+}
+.ro-table__pending {
+  padding: 10px;
+  color: var(--faint);
+  font-size: 12px;
+  animation: ro-pulse 1.2s infinite;
+}
+
+.ro-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.ro-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ro-badge--일치 {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+.ro-badge--요확인 {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.ro-badge--확인불가 {
+  background: #f3f4f6;
+  color: var(--muted);
+}
+.ro-badge--위치없음 {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.ro-badge--수정됨 {
+  background: var(--info-bg);
+  color: var(--info-fg);
+}
+
+.ro-filter {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ro-filter.is-on {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
+}
+.ro-filter__count {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* ── 모달 ──────────────────────────────────────────────────────────────── */
+.ro-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(22, 26, 34, 0.45);
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.ro-modal__card {
+  background: var(--surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  width: 520px;
+  max-width: 100%;
+}
+.ro-modal__card--sm {
+  width: 440px;
+  padding: 22px;
+  gap: 14px;
+}
+.ro-modal__head {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.ro-modal__title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ro-modal__sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ro-modal__x {
+  border: 0;
+  background: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--faint);
+  line-height: 1;
+}
+.ro-modal__foot {
+  padding: 12px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ro-postcode {
+  height: 400px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ro-alert {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ro-alert__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  background: var(--warn-bg);
+  color: var(--warn);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 16px;
+  flex: none;
+}
+.ro-alert__title {
+  font-weight: 700;
+  font-size: 15px;
+}
+.ro-alert__body {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.ro-note {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ── 토스트 ────────────────────────────────────────────────────────────── */
+.ro-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 680px;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--text);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+.ro-toast.is-error {
+  background: var(--danger);
+}
+.ro-toast__x {
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* ── S1 ────────────────────────────────────────────────────────────────── */
+.ro-screen-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 36px 0 40px;
+}
+.ro-s1 {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.ro-s1__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.ro-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--primary-line);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+}
+.ro-banner__title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ro-banner__sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+.ro-readout {
+  flex: 1;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.ro-readout__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text);
+  flex: none;
+}
+.ro-readout__text {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ro-confirm {
+  font-size: 12px;
+  color: var(--success);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ro-drop {
+  height: 120px;
+  width: 100%;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+}
+.ro-drop:hover,
+.ro-drop.is-over {
+  border-color: var(--primary);
+  background: var(--primary-tint-2);
+}
+.ro-drop__title {
+  font-size: 13px;
+  font-weight: 500;
+}
+.ro-filebar {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  align-items: center;
+}
+.ro-filebar__name {
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+}
+.ro-filebar__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.ro-filebar__cell {
+  padding: 10px 16px;
+  min-width: 0;
+}
+.ro-filebar__cell dt {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.ro-filebar__cell dd {
+  font-weight: 500;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ro-s1__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-top: 4px;
+}
+.ro-s1__privacy {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 640px;
+}
+
+/* ── S2 ────────────────────────────────────────────────────────────────── */
+.ro-s2 {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ro-s2__bar {
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: none;
+}
+.ro-s2__progress {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.ro-s2__done {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  background: var(--success-bg);
+  color: var(--success-fg);
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ro-s2__tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.ro-s2__filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ro-s2__table {
+  flex: 1;
+  overflow: auto;
+  padding: 0 24px 24px;
+  min-height: 0;
+}
+
+/* ── 지도 화면 ─────────────────────────────────────────────────────────── */
+.ro-mapscreen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.ro-mapscreen__canvas {
+  position: absolute;
+  inset: 0;
+}
+.ro-pill {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+  overflow: hidden;
+}
+.ro-pill__nav {
+  height: 36px;
+  width: 40px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+}
+.ro-pill__nav:hover:enabled {
+  background: var(--primary-tint-2);
+}
+.ro-pill__nav:disabled {
+  color: var(--border-strong);
+  cursor: not-allowed;
+}
+.ro-pill__text {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* S4 순서 목록 */
+.ro-orderlist {
+  padding: 8px;
+}
+.ro-orderitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: grab;
+}
+.ro-orderitem:hover {
+  background: var(--primary-tint-2);
+}
+.ro-orderitem.is-drag {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+/* 드롭 위치 표시 — 꽂힐 자리에 파란 선을 긋고 그만큼 자리를 벌린다.
+   position은 선(::before/::after)을 항목 기준으로 놓기 위한 것이다. */
+.ro-orderitem {
+  position: relative;
+  transition:
+    margin 120ms ease,
+    background 120ms ease;
+}
+.ro-orderitem.is-dropbefore::before,
+.ro-orderitem.is-dropafter::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-tint);
+  animation: ro-dropline 160ms ease-out;
+}
+.ro-orderitem.is-dropbefore::before {
+  top: -5px;
+}
+.ro-orderitem.is-dropafter::after {
+  bottom: -5px;
+}
+/* 선이 들어갈 만큼만 간격을 벌려 "여기 꽂힌다"가 손에 잡히게 한다. */
+.ro-orderitem.is-dropbefore {
+  margin-top: 10px;
+}
+.ro-orderitem.is-dropafter {
+  margin-bottom: 10px;
+}
+@keyframes ro-dropline {
+  from {
+    transform: scaleX(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+.ro-orderitem__handle {
+  color: var(--border-strong);
+  font-size: 14px;
+  letter-spacing: -2px;
+}
+.ro-orderitem__no {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.ro-orderitem__name {
+  flex: 1;
+  font-size: 13px;
+}
+.ro-orderitem__count {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ro-orderitem__move {
+  border: 0;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 3px;
+  line-height: 1;
+}
+.ro-orderitem__move:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* S5 진입·이탈 */
+.ro-ee {
+  padding: 12px 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ro-ee__box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  min-width: 0;
+}
+.ro-ee__box.is-entry {
+  border-color: var(--success);
+  background: #f0fdf4;
+}
+.ro-ee__box.is-exit {
+  border-color: var(--danger);
+  background: #fef2f2;
+}
+.ro-ee__tag {
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.ro-ee__tag--entry {
+  color: var(--success);
+}
+.ro-ee__tag--exit {
+  color: var(--danger);
+}
+.ro-ee__tag span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ro-ee__name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ro-memberlist {
+  border-top: 1px solid var(--border-soft);
+  max-height: 260px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ro-member {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 18px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: inherit;
+}
+.ro-member:hover {
+  background: var(--surface-2);
+}
+.ro-member__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--primary);
+  flex: none;
+}
+.ro-member__dot.is-entry {
+  background: var(--success);
+  border-color: var(--success);
+}
+.ro-member__dot.is-exit {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.ro-member__name {
+  flex: 1;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ro-member__role {
+  font-size: 11px;
+  font-weight: 700;
+}
+.ro-member__role.is-entry {
+  color: var(--success);
+}
+.ro-member__role.is-exit {
+  color: var(--danger);
+}
+.ro-calls {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  gap: 8px;
+}
+
+/* S6 결과 */
+.ro-s6 {
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  width: 520px;
+  max-width: calc(100% - 32px);
+  max-height: none;
+}
+.ro-s6__downloads {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+/*
+ * 결과 다운로드 버튼 — CSV와 엑셀은 고르는 형식이 다를 뿐 우열이 없다.
+ * 한쪽만 채워 칠하면 다른 쪽이 부차적이거나 비활성으로 읽혀 둘을 같은 모양으로 둔다.
+ */
+.ro-btn--dl {
+  flex: 1;
+  height: 38px;
+  gap: 6px;
+  border-color: var(--primary);
+  background: var(--primary-tint);
+  color: var(--primary);
+  font-weight: 700;
+}
+.ro-btn--dl:hover:enabled {
+  background: var(--primary);
+  color: #fff;
+}
+.ro-btn--dl:disabled {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--faint);
+}
+.ro-btn__ico {
+  font-size: 14px;
+  line-height: 1;
+}
+.ro-s6__notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ro-s6__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+/* 화면별 패널 너비(핸드오프 기준). 1200px 폭에서도 지도가 남도록 고정폭을 쓴다. */
+.ro-panel--s3,
+.ro-panel--s5 {
+  width: 320px;
+  max-width: calc(100% - 32px);
+}
+.ro-panel--s4 {
+  width: 300px;
+  max-width: calc(100% - 32px);
+}
+
+/* 카카오 InfoWindow 안에 넣는 멤버 목록. */
+.ro-info {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  max-width: 260px;
+}
+.ro-info b {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* ── 배지 안 숫자·기호의 세로 정렬 ──────────────────────────────────────────
+ * Noto Sans KR은 ascent/descent가 커서(합계 약 1.45em) 상속된 line-height 1.5
+ * 안에서 숫자의 광학 중심이 박스 중심보다 아래에 놓인다. 원·사각 배지처럼
+ * 좁은 상자에서는 이 차이가 "숫자가 아래로 쏠린" 것으로 보인다.
+ * 숫자는 메트릭이 대칭인 시스템 폰트로 그리고 line-height를 1로 고정한다.
+ * ───────────────────────────────────────────────────────────────────────── */
+.ro-brand__logo,
+.ro-step__dot,
+.ro-alert__icon,
+.ro-filebar__icon,
+.ro-orderitem__no {
+  font-family: system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* S5 이전·다음 클러스터 안내(지도의 참고점과 같은 색). */
+.ro-neighbors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 18px 10px;
+}
+.ro-neighbor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ro-neighbor__tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.ro-neighbor__tag.is-prev {
+  background: var(--success);
+  color: #fff;
+}
+.ro-neighbor__tag.is-next {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.ro-neighbor__text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* S6 결과 표 ↔ 지도 연동: 행 호버 강조 + 순서 편집 바. */
+.ro-s6 .ro-table tbody tr {
+  cursor: pointer;
+}
+.ro-table tbody tr.is-hover {
+  background: var(--primary-tint);
+}
+.ro-s6__edit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ro-s6__edit .ro-row {
+  display: flex;
+  gap: 6px;
+}
+.ro-move {
+  display: inline-flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+/* ── 지도 위 "여기를 보라" 신호 ─────────────────────────────────────────────
+ * 미지정 클러스터처럼 사용자가 찾아야 하는 지점에서 물결이 퍼진다.
+ * 클릭을 막지 않도록 pointer-events는 꺼 둔다.
+ * ───────────────────────────────────────────────────────────────────────── */
+.ro-pulse {
+  position: relative;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.ro-pulse__ring,
+.ro-pulse__dot {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.ro-pulse__ring {
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--danger, #dc2626);
+  animation: ro-pulse-ring 1.1s ease-out infinite;
+}
+.ro-pulse__dot {
+  width: 12px;
+  height: 12px;
+  background: var(--danger, #dc2626);
+  box-shadow: 0 0 0 3px #fff;
+  animation: ro-pulse-dot 1.1s ease-in-out infinite;
+}
+@keyframes ro-pulse-ring {
+  from {
+    width: 16px;
+    height: 16px;
+    opacity: 0.9;
+  }
+  to {
+    width: 76px;
+    height: 76px;
+    opacity: 0;
+  }
+}
+@keyframes ro-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 단일 건물 클러스터 — 확정 버튼 자리를 대신하는 안내. */
+.ro-autodone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--success-bg);
+  color: var(--success-fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+.ro-autodone::before {
+  content: '✓';
+  font-weight: 700;
+}
+
+/* ── 표 행 드래그 재정렬(S6 순서 편집) ──────────────────────────────────────
+ * tr에는 margin이 먹지 않아 삽입선을 inset 그림자로 긋는다.
+ * S4 목록의 파란 선과 같은 뜻이므로 색도 같게 맞춘다.
+ * ───────────────────────────────────────────────────────────────────────── */
+.ro-table tbody tr.is-reorderable {
+  cursor: grab;
+}
+.ro-table tbody tr.is-reorderable.is-drag {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.ro-table tbody tr.is-dropbefore td {
+  box-shadow: inset 0 3px 0 var(--primary);
+}
+.ro-table tbody tr.is-dropafter td {
+  box-shadow: inset 0 -3px 0 var(--primary);
+}
+.ro-table tbody tr.is-dropbefore td:first-child,
+.ro-table tbody tr.is-dropafter td:first-child {
+  position: relative;
+}
+.ro-td--grip {
+  color: var(--border-strong);
+  font-size: 13px;
+  letter-spacing: -2px;
+  cursor: grab;
+  user-select: none;
+}
+
+/* 지도에서 누른 배송지 — 마우스가 떠나도 표에서 계속 보이게 남긴다. */
+/*
+ * 지도에서 누른 배송지 — 마우스가 떠나도 표에서 계속 보이게 남긴다.
+ * 왼쪽 띠를 모든 칸에 주면 칸마다 세로줄이 그어져 표가 지저분해진다.
+ * 행 전체를 한 번 두른 테두리처럼 보이도록 위·아래는 모든 칸에, 좌우는 끝 칸에만 준다.
+ */
+.ro-table tbody tr.is-selected td {
+  background: var(--primary-tint);
+  box-shadow:
+    inset 0 2px 0 var(--primary),
+    inset 0 -2px 0 var(--primary);
+}
+.ro-table tbody tr.is-selected td:first-child {
+  box-shadow:
+    inset 0 2px 0 var(--primary),
+    inset 0 -2px 0 var(--primary),
+    inset 3px 0 0 var(--primary);
+}
+.ro-table tbody tr.is-selected td:last-child {
+  box-shadow:
+    inset 0 2px 0 var(--primary),
+    inset 0 -2px 0 var(--primary),
+    inset -2px 0 0 var(--primary);
+}
+/* 방금 지도에서 찾아온 행은 한 번 번쩍여 눈이 따라가게 한다. */
+.ro-table tbody tr.is-selected {
+  animation: ro-rowflash 900ms ease-out;
+}
+@keyframes ro-rowflash {
+  0%,
+  40% {
+    background: var(--primary);
+  }
+  100% {
+    background: transparent;
+  }
+}
