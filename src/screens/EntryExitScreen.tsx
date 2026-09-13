@@ -3,9 +3,9 @@ import { ArrowRight } from 'lucide-react';
 
 import { RateLimitExceededError, RateLimitTracker, fetchTimeMatrix } from '../api';
 import type { TimePair } from '../api';
-import { orderWithinCluster, pairsNeeded, suggestEntryExit } from '../core';
+import { haversineFallbackSec, orderWithinCluster, pairsNeeded, suggestEntryExit } from '../core';
 import { MapFit, ProgressTrack, RateLimitModal, SidePanel } from '../components';
-import { ClusterLayer, MapCanvas, MarkerLayer, RefPointLayer, RouteLayer } from '../map';
+import { ClusterLayer, MAP_COLOR, MapCanvas, MarkerLayer, RefPointLayer, RouteLayer } from '../map';
 import type { RefPoint } from '../map';
 import { useAbortable } from '../hooks/useAbortable';
 import { kakaoHeaders, useSessionStore } from '../store/session';
@@ -15,10 +15,12 @@ import { useVolatileStore } from '../store/volatile';
 import type { Cluster, LatLng, PrimaryGroup } from '../types';
 import {
   assembleFinalOrder,
+  firstUnconfirmedIndex,
   groupBuildingLabel,
   groupPath,
   makeOrderOf,
   makeTimeSec,
+  reusableTimes,
   showApiError,
   withPicks,
 } from './helpers';
@@ -47,37 +49,6 @@ function latLngOf(groups: PrimaryGroup[], groupId: number | undefined): LatLng |
   return group ? { lat: group.lat, lon: group.lon } : null;
 }
 
-/** 아직 확정하지 않은 첫 클러스터의 위치. 전부 확정했으면 0. */
-function firstUnconfirmed(
-  clusterOrder: readonly number[],
-  picks: Readonly<Record<number, ClusterPick>>,
-): number {
-  const i = clusterOrder.findIndex((id) => picks[id]?.innerOrder === undefined);
-  return i < 0 ? 0 : i;
-}
-
-/**
- * 이미 값을 치러 둔 도로시간 중 재사용할 수 있는 칸.
- *
- * `pairsNeeded`는 클러스터 멤버의 블록 대표 쌍만 본다 — 진입·이탈을 바꿔도 필요한 쌍은
- * 완전히 같다. 그래서 진입·이탈만 고쳐 다시 계산하는 일은 한 칸도 다시 살 필요가 없다.
- *
- * 다만 **직선거리로 메운 칸이 섞인 행렬은 물려받지 않는다.** 스토어는 대체가 몇 칸인지
- * (`haversineFallbacks`)만 갖고 있고 어느 칸인지는 모른다. 섞인 행렬을 그대로 재사용하면
- * 추정치가 영영 굳어 실제 도로시간을 받을 길이 사라진다 — 그 클러스터에서 `다시 계산`은
- * 바로 그 추정치를 걷어내려고 누르는 것이므로, 대체가 0건인 행렬만 공짜로 물려준다.
- */
-function reusableTimes(pick: ClusterPick | undefined): Record<string, number> {
-  const saved = pick?.timeMatrix;
-  if (!saved) return {};
-  const estimated = pick?.haversineKeys;
-  // 추정치로 메운 칸은 빼고 물려준다. 통째로 물려주면 그 칸이 영영 실제 도로시간을
-  // 받지 못하고, 통째로 버리면 이미 값을 치른 실제 도로시간까지 다시 산다.
-  if (!estimated?.length) return saved;
-  const skip = new Set(estimated);
-  return Object.fromEntries(Object.entries(saved).filter(([key]) => !skip.has(key)));
-}
-
 /**
  * S5 진입 · 이탈 지점.
  * 핸드오프의 기본 변형인 "A: 우측 카드"를 구현했다
@@ -101,7 +72,9 @@ export function EntryExitScreen() {
   // 새로고침·재진입 시 이어서 할 수 있도록 첫 미확정 클러스터에서 시작한다.
   const [index, setIndex] = useState(() => {
     const state = useSessionStore.getState();
-    return firstUnconfirmed(state.clusterOrder, state.clusterPicks);
+    const i = firstUnconfirmedIndex(state.clusterOrder, state.clusterPicks);
+    // 전부 확정했으면(-1) 첫 클러스터로 — 재진입 시 처음부터 다시 훑어볼 수 있게 한다.
+    return i < 0 ? 0 : i;
   });
   const [selections, setSelections] = useState<Record<number, Selection>>({});
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -168,7 +141,9 @@ export function EntryExitScreen() {
   const confirmedCount = clusterOrder.filter(
     (id) => clusterPicks[id]?.innerOrder !== undefined,
   ).length;
-  const nextUnconfirmed = firstUnconfirmed(clusterOrder, clusterPicks);
+  const nextUnconfirmedIdx = firstUnconfirmedIndex(clusterOrder, clusterPicks);
+  // 전부 확정했으면(-1) 첫 클러스터를 가리킨다 — 위 초기 index와 같은 해석.
+  const nextUnconfirmed = nextUnconfirmedIdx < 0 ? 0 : nextUnconfirmedIdx;
 
   // 단일 건물 클러스터는 고를 여지도, 부를 도로시간도 없다(쌍이 0개).
   // 사용자가 매번 "확정"을 누르게 할 이유가 없어 자동으로 확정하고 다음으로 넘긴다.
@@ -208,6 +183,12 @@ export function EntryExitScreen() {
     },
     [],
   );
+  // D12: 언마운트 뒤(= 신호가 자연히 끊긴 것) confirm()이 계속 실행되며 다른 화면에 서
+  // 있는 사용자에게 "중단했습니다" 토스트를 띄우는 것을 막는다.
+  const mountedRef = useRef(true);
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
   const allConfirmed = clusterOrder.length > 0 && confirmedCount === clusterOrder.length;
 
@@ -291,20 +272,33 @@ export function EntryExitScreen() {
     });
 
     const collected = collectedRef.current[cluster.id] ?? { times: {}, fallbacks: 0, fallbackKeys: [] };
+    // D3: 부분 수집분 중 추정으로 메운 칸은 다시 사야 한다 — 새 REST 키로 재시도하는
+    // 이유가 바로 그 칸을 실제 도로시간으로 받으려는 것이다. known(그리고 아래 대체
+    // 집계)에서 빼면 다음 호출이 그 칸만 다시 부른다. 클러스터 간 경로(useAutoRoute의
+    // clusterTimeMatrix 재사용부)와 같은 판단이다.
+    const collectedKnown = reusableTimes({
+      timeMatrix: collected.times,
+      haversineKeys: collected.fallbackKeys,
+    });
     // 확정해 둔 행렬을 먼저 깔고 부분 수집분을 덮는다 → 진입·이탈만 바꾼 재계산은 호출 0회.
-    let times: Record<string, number> = { ...reusableTimes(pick), ...collected.times };
-    // 호출을 건너뛰면 makeTimeSec이 남은 칸을 Haversine 추정치로 메운다.
-    let fallbacks = haversineOnly
-      ? collected.fallbacks + (timePairs.length - Object.keys(times).length)
-      : collected.fallbacks;
-    // 직선거리 모드는 남은 칸 전부가 추정치가 된다. 그 키는 makeTimeSec이 메우는 시점에야
-    // 정해지므로, 여기서는 '아직 값이 없는 쌍'이 곧 추정 대상이다.
-    let fallbackKeys: string[] = haversineOnly
-      ? [
-          ...collected.fallbackKeys,
-          ...timePairs.filter((pair) => times[pair.key] === undefined).map((pair) => pair.key),
-        ]
-      : [...collected.fallbackKeys];
+    let times: Record<string, number> = { ...reusableTimes(pick), ...collectedKnown };
+    // D1: 직선거리 모드는 호출을 건너뛰되, 남은 칸도 실제로 추정치를 채워 timeMatrix에
+    // 넣는다. 그러지 않으면 timeMatrix 칸 수 < haversineFallbacks가 되어 화면의
+    // "칸 수 - 대체 수" 계산이 음수로 찍힌다.
+    let fallbacks = 0;
+    let fallbackKeys: string[] = [];
+    if (haversineOnly) {
+      const missing = timePairs.filter((pair) => times[pair.key] === undefined);
+      const estimated = Object.fromEntries(
+        missing.map((pair) => [
+          pair.key,
+          haversineFallbackSec(pair.from.lat, pair.from.lon, pair.to.lat, pair.to.lon),
+        ]),
+      );
+      times = { ...times, ...estimated };
+      fallbacks = missing.length;
+      fallbackKeys = missing.map((pair) => pair.key);
+    }
 
     try {
       if (!haversineOnly && timePairs.length > 0) {
@@ -321,16 +315,26 @@ export function EntryExitScreen() {
           known: times,
         });
         times = { ...times, ...result.times };
-        fallbacks = collected.fallbacks + result.fallbacks;
-        fallbackKeys = [...collected.fallbackKeys, ...result.fallbackKeys];
+        fallbacks = result.fallbacks;
+        fallbackKeys = [...result.fallbackKeys];
         // 중단은 "확정"이 아니다. 상태를 하나도 쓰지 않고 그대로 머문다.
         if (result.aborted) {
           collectedRef.current[cluster.id] = { times, fallbacks, fallbackKeys };
-          setPartial((prev) => ({
-            ...prev,
+          const nextPartial = {
+            ...partialRef.current,
             [cluster.id]: { saved: Object.keys(times).length, total: timePairs.length },
-          }));
-          showInfo('도로시간 호출을 중단했습니다. 이 클러스터는 확정되지 않았습니다.');
+          };
+          // D12: 언마운트 정리 effect(아래)가 참조하는 ref를 setPartial과 함께 즉시
+          // 갱신한다 — setPartial만 믿으면 이 직후 언마운트될 때 그 effect가 아직
+          // 옛 값을 들고 있어 부분 수집 건수를 하나 적게 알린다.
+          partialRef.current = nextPartial;
+          setPartial(nextPartial);
+          // D12: 신호가 끊긴 이유가 언마운트(화면을 떠남)라면 사용자는 이미 다른 화면에
+          // 있다 — 그 토스트는 아래 언마운트 정리 effect가 대신 알린다. 사용자가 직접
+          // 누른 "중단"일 때만(아직 이 화면에 있을 때만) 알린다.
+          if (mountedRef.current) {
+            showInfo('도로시간 호출을 중단했습니다. 이 클러스터는 확정되지 않았습니다.');
+          }
           return;
         }
       }
@@ -360,8 +364,8 @@ export function EntryExitScreen() {
         const merged = { ...times, ...err.partial.times };
         collectedRef.current[cluster.id] = {
           times: merged,
-          fallbacks: collected.fallbacks + err.partial.fallbacks,
-          fallbackKeys: [...collected.fallbackKeys, ...err.partial.fallbackKeys],
+          fallbacks: err.partial.fallbacks,
+          fallbackKeys: [...err.partial.fallbackKeys],
         };
         const state = { saved: Object.keys(merged).length, total: timePairs.length };
         setPartial((prev) => ({ ...prev, [cluster.id]: state }));
@@ -387,40 +391,9 @@ export function EntryExitScreen() {
     setStep(6);
   };
 
-  // ── 지도에 넘길 배열들(정체성이 바뀌면 레이어가 재생성되므로 memo 필수) ──
-  const visibleGroupIds = useMemo(() => current?.groupIds ?? [], [current]);
-  /** 이전 위치(직전 클러스터의 이탈점) · 다음 클러스터 중심 — 참고용이라 클릭되지 않는다. */
-  const refPoints = useMemo<RefPoint[]>(() => {
-    const points: RefPoint[] = [];
-    if (prevExitPoint) {
-      points.push({
-        id: 'prev',
-        at: prevExitPoint,
-        kind: 'prev',
-        label:
-          prevExitGroupId === undefined
-            ? '출발지'
-            : `이전 위치 · ${labelOf(prevExitGroupId)}`,
-      });
-    }
-    if (nextPoint) {
-      points.push({
-        id: 'next',
-        at: nextPoint,
-        kind: 'next',
-        label:
-          nextEntryGroupId === undefined
-            ? '다음 클러스터'
-            : `다음 진입 · ${labelOf(nextEntryGroupId)}`,
-      });
-    }
-    return points;
-  }, [prevExitPoint, prevExitGroupId, nextPoint, nextEntryGroupId, labelOf]);
-  // 이웃 참고점까지 한 화면에 들어와야 어디서 들어오고 어디로 나가는지 판단이 된다.
-  const fitPoints = useMemo<LatLng[]>(
-    () => [...(current?.hull ?? []), ...refPoints.map((p) => p.at)],
-    [current, refPoints],
-  );
+  // ── 확정 파이프라인에 딸린 effect(3-1) ──────────────────────────────────
+  // 지도용 파생값(아래)보다 먼저 둔다 — confirm()을 어떻게 자동 호출하는지가
+  // 한 덩어리로 이어져야 이 effect 셋의 흐름을 지도 memo에 가로막히지 않고 읽을 수 있다.
   // 렌더 중에 ref를 건드리지 않는다. 커밋 뒤에 최신 confirm으로 갈아 끼운다.
   useEffect(() => {
     confirmRef.current = confirm;
@@ -456,6 +429,41 @@ export function EntryExitScreen() {
     if (run.length < 2) return;
     showInfo(`${run[0] + 1}–${run[run.length - 1] + 1}번은 단일 지점이라 자동 확정했습니다.`);
   }, [clusterById, clusterOrder, index, clusterPicks]);
+
+  // ── 지도에 넘길 배열들(정체성이 바뀌면 레이어가 재생성되므로 memo 필수) ──
+  const visibleGroupIds = useMemo(() => current?.groupIds ?? [], [current]);
+  /** 이전 위치(직전 클러스터의 이탈점) · 다음 클러스터 중심 — 참고용이라 클릭되지 않는다. */
+  const refPoints = useMemo<RefPoint[]>(() => {
+    const points: RefPoint[] = [];
+    if (prevExitPoint) {
+      points.push({
+        id: 'prev',
+        at: prevExitPoint,
+        kind: 'prev',
+        label:
+          prevExitGroupId === undefined
+            ? '출발지'
+            : `이전 위치 · ${labelOf(prevExitGroupId)}`,
+      });
+    }
+    if (nextPoint) {
+      points.push({
+        id: 'next',
+        at: nextPoint,
+        kind: 'next',
+        label:
+          nextEntryGroupId === undefined
+            ? '다음 클러스터'
+            : `다음 진입 · ${labelOf(nextEntryGroupId)}`,
+      });
+    }
+    return points;
+  }, [prevExitPoint, prevExitGroupId, nextPoint, nextEntryGroupId, labelOf]);
+  // 이웃 참고점까지 한 화면에 들어와야 어디서 들어오고 어디로 나가는지 판단이 된다.
+  const fitPoints = useMemo<LatLng[]>(
+    () => [...(current?.hull ?? []), ...refPoints.map((p) => p.at)],
+    [current, refPoints],
+  );
 
   const currentPath = useMemo(
     () => (pick?.innerOrder ? [groupPath(pick.innerOrder, groups)] : []),
@@ -545,9 +553,9 @@ export function EntryExitScreen() {
             prevClusterId={prevClusterId}
             nextClusterId={nextClusterId}
           />
-          <RouteLayer paths={donePaths} style="solid" color="#16A34A" />
-          <RouteLayer paths={entryLinkPath} style="dashed" color="#16A34A" />
-          <RouteLayer paths={exitLinkPath} style="dashed" color="#DC2626" />
+          <RouteLayer paths={donePaths} style="solid" color={MAP_COLOR.done} />
+          <RouteLayer paths={entryLinkPath} style="dashed" color={MAP_COLOR.done} />
+          <RouteLayer paths={exitLinkPath} style="dashed" color={MAP_COLOR.next} />
           <RouteLayer paths={currentPath} style="solid" />
           <RefPointLayer points={refPoints} />
           <MarkerLayer

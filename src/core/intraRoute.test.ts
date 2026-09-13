@@ -119,7 +119,7 @@ describe('buildBlocks / pairsNeeded', () => {
   });
 });
 
-describe('orderWithinCluster — 블록 ≤ 8이면 완전탐색', () => {
+describe('orderWithinCluster — 중간 블록(진입·이탈 제외) ≤ 6이면 완전탐색', () => {
   test('진입·이탈을 고정한 최적 순서를 찾는다', () => {
     const { nodes, groups, cluster, timeSec } = fourBlockFixture();
     const { innerOrder } = orderWithinCluster(cluster, groups, nodes, 0, 3, timeSec);
@@ -169,7 +169,7 @@ describe('orderWithinCluster — 블록 ≤ 8이면 완전탐색', () => {
   });
 });
 
-describe('orderWithinCluster — 블록 > 8이면 NN', () => {
+describe('orderWithinCluster — 중간 블록(진입·이탈 제외) > 6이면 NN', () => {
   const nodes: Node[] = [];
   const groups: PrimaryGroup[] = [];
   for (let i = 0; i < 10; i++) {
@@ -191,6 +191,18 @@ describe('orderWithinCluster — 블록 > 8이면 NN', () => {
     expect([...innerOrder].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(innerOrder[0]).toBe(0);
     expect(innerOrder[innerOrder.length - 1]).toBe(9);
+  });
+
+  // F12: NN의 동률 처리가 "대표 그룹 id가 작은 쪽"으로 결정적이어야 한다.
+  // groupIds를 id 오름차순이 아니게 흩어 둬서, `buildClusters`/`buildBlocks`가
+  // 우연히 id 오름차순으로 넘겨준 덕에 통과하던 것이 아님을 확인한다.
+  test('비용이 모두 같으면 배열 순서가 아니라 대표 그룹 id 오름차순으로 고른다', () => {
+    const shuffledIds = [0, 9, 4, 2, 6, 1, 3, 5, 7, 8];
+    const shuffledCluster = makeCluster(0, shuffledIds, groups);
+    const tie = (): number => 5;
+
+    const { innerOrder } = orderWithinCluster(shuffledCluster, groups, nodes, 0, 8, tie);
+    expect(innerOrder).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 9, 8]);
   });
 });
 

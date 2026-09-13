@@ -45,6 +45,11 @@ export function ResultScreen() {
   const clusters = useSessionStore((s) => s.clusters);
   const clusterOrder = useSessionStore((s) => s.clusterOrder);
   const clusterPicks = useSessionStore((s) => s.clusterPicks);
+  // D2: 자동 모드가 쓰는 클러스터 "간"(방문 순서를 정하는) 행렬·대체 칸. 원시 참조를
+  // 그대로 구독한다 — `.map`/`Object.keys`로 매 렌더 새 값을 만드는 셀렉터만
+  // 무한 렌더 위험이 있다(`AutoRouteScreen.tsx`의 `clusterHaversineKeys` 구독과 같은 근거).
+  const clusterTimeMatrix = useSessionStore((s) => s.clusterTimeMatrix);
+  const clusterHaversineKeys = useSessionStore((s) => s.clusterHaversineKeys);
   const finalOrder = useSessionStore((s) => s.finalOrder);
   const setFinalOrder = useSessionStore((s) => s.setFinalOrder);
   const reset = useSessionStore((s) => s.reset);
@@ -100,6 +105,12 @@ export function ResultScreen() {
    * 도로시간 통계. `timeMatrix`에는 API가 실패해 직선거리로 메운 칸도 그대로 들어간다.
    * 행렬 칸 수를 "도로시간 호출 수"라고 부르면, 한도에 걸려 전 구간을 추정으로 채우고도
    * 태연히 "도로시간 340회"라고 적게 된다. 실제 호출과 대체를 나눠 센다.
+   *
+   * D2: 클러스터 "내부"(`clusterPicks`) 말고 클러스터 "간"(`clusterTimeMatrix`, 자동
+   * 모드가 방문 순서 자체를 정할 때 쓰는 행렬)도 따로 센다. 자동 모드는 전체 호출의
+   * 대부분이 클러스터 간이라, 이걸 빼면 화면이 실제 호출의 극히 일부만 보여주게 된다.
+   * 성격도 다르다 — 내부 대체는 그 클러스터의 순서만 흔들지만, 클러스터 간 대체는
+   * 방문 순서 자체가 직선거리 추정으로 정해졌다는 뜻이라 문구를 나눈다.
    */
   const timeStats = useMemo(() => {
     let cells = 0;
@@ -116,8 +127,17 @@ export function ResultScreen() {
         estimated.push(i + 1);
       }
     });
-    return { calls: cells - fallbacks, fallbacks, estimated };
-  }, [clusterOrder, clusterPicks]);
+    const interCells = Object.keys(clusterTimeMatrix).length;
+    const interFallbacks = clusterHaversineKeys.length;
+    return {
+      calls: cells - fallbacks,
+      fallbacks,
+      estimated,
+      interCalls: interCells - interFallbacks,
+      interFallbacks,
+      hasInter: interCells > 0,
+    };
+  }, [clusterOrder, clusterPicks, clusterTimeMatrix, clusterHaversineKeys]);
 
   /** 그룹 id → 건물(단지) 이름. 사람 이름 대신 지도에 붙는 이름이다 */
   const buildingOfGroup = useMemo(() => {
@@ -233,7 +253,7 @@ export function ResultScreen() {
 
   // 표 행 드래그 재정렬. S4 순서 목록과 같은 훅을 써서 조작감이 같다
   // (가장자리 자동 스크롤 + 삽입 위치 표시).
-  const { listRef, dragFrom, dropAt, onItemDragStart, onDragEnd } = useDragReorder(moveRow);
+  const { listRef, dragFrom, dropLine, onItemDragStart, onDragEnd } = useDragReorder(moveRow);
 
   const startEdit = () => {
     setDraft(finalOrder.slice());
@@ -512,6 +532,21 @@ export function ResultScreen() {
                   {timeStats.estimated.join('·')}번째)
                 </div>
               ) : null}
+              {/* D2: 자동 모드에서만 채워지는 클러스터 "간" 행렬 — 수동 모드는 hasInter가 false다. */}
+              {timeStats.hasInter ? (
+                <div>
+                  클러스터 간 이동 도로시간 {timeStats.interCalls}회
+                  {timeStats.interFallbacks > 0
+                    ? ` · 직선거리 추정 ${timeStats.interFallbacks}칸`
+                    : ''}
+                </div>
+              ) : null}
+              {timeStats.interFallbacks > 0 ? (
+                <div className="ro-warn-text">
+                  · 클러스터 방문 순서 자체가 일부 직선거리 추정으로 정해졌습니다 (
+                  {timeStats.interFallbacks}칸)
+                </div>
+              ) : null}
               {excluded.length > 0 ? (
                 <details>
                   <summary className="ro-warn-text" style={{ cursor: 'pointer' }}>
@@ -540,11 +575,7 @@ export function ResultScreen() {
           columns={columns}
           rows={resultRows}
           rowKey={(r) => r.node.id}
-          reorderable={editing}
-          onRowDragStart={onItemDragStart}
-          onRowDragEnd={onDragEnd}
-          dragFrom={dragFrom}
-          dropAt={dropAt}
+          reorder={editing ? { dragFrom, dropLine, onItemDragStart, onDragEnd } : null}
           rowClassName={(r, i) =>
             [
               i % 2 === 1 ? 'is-odd' : null,
@@ -556,7 +587,7 @@ export function ResultScreen() {
           }
           onRowHover={onRowHover}
           onRowClick={onRowClick}
-          scrollToKey={scrollTarget?.id ?? null}
+          scrollTo={scrollTarget ? { key: scrollTarget.id } : null}
           empty="아직 최종 순서가 없습니다"
         />
       </SidePanel>

@@ -17,7 +17,7 @@
  *    `[...나머지 동→호, 이탈]`로 쪼개진다(블록이 하나뿐이어도 똑같이 적용).
  */
 
-import type { Cluster, LatLng, Node, PrimaryGroup } from '../types';
+import type { Cluster, LatLng, Node, PrimaryGroup, TimeSecFn } from '../types';
 import { compareUnitAddr } from './address';
 import { haversineKm } from './geo';
 
@@ -36,9 +36,6 @@ export interface Block {
   /** 대표 1차 그룹 id = 첫 멤버. 도로시간 호출은 이 대표끼리만 한다 */
   rep: number;
 }
-
-/** 도로시간(초) 조회 함수. 1차 그룹 id 쌍을 받는다. */
-export type TimeSecFn = (fromGroupId: number, toGroupId: number) => number;
 
 /** {@link orderWithinCluster}의 결과. */
 export interface IntraRouteResult {
@@ -134,6 +131,11 @@ function lastMemberOf(block: Block): number {
  * 다음 홉의 기준점은 방금 들른 블록의 **마지막 멤버**다(대표가 아니다).
  * 데스크톱판 `_nearest_within_cluster`와 같은 규칙이며, 대표끼리만 받아 둔
  * 도로시간표에 없는 쌍은 호출부(`makeTimeSec`)가 Haversine 추정으로 메운다.
+ *
+ * 동률 처리는 `nnConstruct`/`suggestEntryExit`과 같은 규칙(비용이 같으면
+ * 대표 그룹 id가 작은 쪽)을 명시적으로 둔다. 전에는 `remaining` 배열의 앞쪽이
+ * 이겼는데, 그건 `buildClusters`/`buildBlocks`가 우연히 id 오름차순으로 넘겨
+ * 줘서 결과만 같았을 뿐이다 — 그 우연에 기대지 않도록 코드로 고정한다.
  */
 function nearestMiddle(start: Block, middle: Block[], timeSec: TimeSecFn): Block[] {
   const remaining = middle.slice();
@@ -144,7 +146,7 @@ function nearestMiddle(start: Block, middle: Block[], timeSec: TimeSecFn): Block
     let bestCost = Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const t = timeSec(currentId, remaining[i].rep);
-      if (t < bestCost) {
+      if (t < bestCost || (t === bestCost && remaining[i].rep < remaining[bestIdx].rep)) {
         bestCost = t;
         bestIdx = i;
       }

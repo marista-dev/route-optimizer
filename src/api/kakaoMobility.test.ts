@@ -139,6 +139,27 @@ describe('drivingTimeSec', () => {
     await expect(drivingTimeSec(A, B, HEADERS, { sleep })).resolves.toBe(DRIVING_TIME_FAIL);
     expect(waits).toEqual([3_000, 6_000, 12_000, 24_000, 32_000]);
   });
+
+  it('signal이 이미 abort된 채로 들어오면 fetch도 즉시 abort된 신호를 받는다(F6)', async () => {
+    // 대기열에서 빠져나올 때는 아직 abort 전이었지만, 실제 fetch를 부르는
+    // 시점엔 이미 "중단"이 눌린 경우를 재현한다. 'abort' 리스너는 이미 abort된
+    // signal에 붙이면 다시 불리지 않으므로, fetchWithTimeout이 진입 시점에
+    // 한 번 더 확인해 주지 않으면 내부 컨트롤러가 10초 타임아웃까지 살아 있는다.
+    const controller = new AbortController();
+    controller.abort();
+    let sawAbortedSignal = false;
+    vi.stubGlobal('fetch', async (_url: string, init?: { signal?: AbortSignal }) => {
+      sawAbortedSignal = init?.signal?.aborted ?? false;
+      const err = new Error('The operation was aborted.');
+      err.name = 'AbortError';
+      throw err;
+    });
+
+    await expect(
+      drivingTimeSec(A, B, HEADERS, { signal: controller.signal, sleep: async () => {} }),
+    ).rejects.toThrow();
+    expect(sawAbortedSignal).toBe(true);
+  });
 });
 
 describe('fetchTimeMatrix', () => {

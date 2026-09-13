@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   assembleFinalOrder,
   buildPostcodeAddress,
-  clusterOfNode,
   columnLetter,
   emptyAddressCount,
   escapeHtml,
@@ -168,17 +167,6 @@ describe('지도용 좌표 변환', () => {
     expect(groupPath(undefined, groups)).toEqual([]);
   });
 
-  it('노드 → 클러스터 매핑', () => {
-    const groups = [group(0, [0, 1], 35, 126, 'a'), group(1, [2], 36, 127, 'b')];
-    const clusters: Cluster[] = [
-      { id: 7, groupIds: [0], centroid: { lat: 35, lon: 126 }, hull: [] },
-      { id: 8, groupIds: [1], centroid: { lat: 36, lon: 127 }, hull: [] },
-    ];
-    const map = clusterOfNode(groups, clusters);
-    expect(map.get(0)).toBe(7);
-    expect(map.get(1)).toBe(7);
-    expect(map.get(2)).toBe(8);
-  });
 });
 
 describe('buildPostcodeAddress', () => {

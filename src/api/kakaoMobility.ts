@@ -245,6 +245,10 @@ async function fetchWithTimeout(
   signal: AbortSignal | undefined,
 ): Promise<Response> {
   const controller = new AbortController();
+  // signal이 이미 abort된 채로 들어오면 'abort' 리스너는 다시 불리지 않는다(스펙).
+  // 그래서 여기서 즉시 한 번 확인해 준다 — 안 하면 "중단"을 눌러도 이미 대기열을
+  // 빠져나온 요청은 컨트롤러가 살아 있는 채로 최대 REQUEST_TIMEOUT_MS까지 이어진다.
+  if (signal?.aborted) controller.abort();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -264,13 +268,11 @@ export interface TimePair {
   to: LatLng;
 }
 
-export interface TimeMatrixResult {
-  /** 쌍 키 → 주행 시간(초). 반환 시점의 스냅샷 복사본이다 */
-  times: Record<string, number>;
-  /** API 실패로 Haversine 추정으로 채운 셀 수 */
-  fallbacks: number;
-  /** 그 셀들의 키. 재계산할 때 이 칸만 다시 받으면 된다 */
-  fallbackKeys: string[];
+/**
+ * {@link TimeMatrixPartial}(= `{times, fallbacks, fallbackKeys}`)에
+ * 중단 여부만 얹은 것 — 같은 모양을 또 선언하지 않는다(리팩터링 점검 F3).
+ */
+export interface TimeMatrixResult extends TimeMatrixPartial {
   /** `signal`이 abort돼서 일부만 모았으면 true. 호출부는 결과를 버려야 한다 */
   aborted: boolean;
 }
@@ -318,7 +320,6 @@ export async function fetchTimeMatrix(
   const times: Record<string, number> = {};
   const fallbackKeys: string[] = [];
   let fallbacks = 0;
-  let done = 0;
 
   // 이미 아는 쌍은 값만 싣고 호출하지 않는다.
   const pending = pairs.filter((pair) => {
@@ -359,7 +360,6 @@ export async function fetchTimeMatrix(
       tracker.consecutive = 0;
       times[pair.key] = sec;
     }
-    done += 1;
   });
 
   try {

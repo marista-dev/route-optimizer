@@ -1,6 +1,8 @@
 /**
- * helpers.ts — 화면들이 공유하는 순수 계산 함수.
- * React·DOM·스토어에 의존하지 않으므로 그대로 단위 테스트한다.
+ * helpers.ts — 화면들이 공유하는 계산 함수.
+ * 대부분은 React·DOM·스토어에 의존하지 않는 순수 함수라 그대로 단위 테스트한다.
+ * 예외: `showApiError`는 토스트 스토어(`store/toast`)를 부른다 — 순수하지 않지만
+ * 여러 화면이 똑같이 쓰는 한 줄이라 여기 남겨 둔다(D8).
  */
 
 import { KakaoAuthError } from '../api';
@@ -144,6 +146,42 @@ export function assembleFinalOrder(
   return out;
 }
 
+/**
+ * 이미 값을 치러 둔 도로시간 중 **재사용해도 되는 칸**만 고른다.
+ *
+ * `pairsNeeded`는 블록 대표 쌍만 보므로 진입·이탈을 바꿔도 필요한 쌍은 똑같다 —
+ * 저장된 행렬은 원칙적으로 그대로 물려줄 수 있다. 다만 **직선거리로 메운 칸은 뺀다.**
+ * 그 칸까지 물려주면 추정치가 굳어 실제 도로시간을 받을 길이 영영 사라지는데,
+ * `다시 계산`을 누르는 이유가 보통 바로 그 추정치를 걷어내는 것이다.
+ *
+ * 쿼터를 지키는 규칙이라 한 곳에만 있어야 한다 — 갈라져도 화면에는 아무 증상이 없고
+ * API 요금과 결과 정확도로만 드러난다.
+ */
+export function reusableTimes(
+  pick: { timeMatrix?: Record<string, number>; haversineKeys?: string[] } | undefined,
+): Record<string, number> {
+  const saved = pick?.timeMatrix;
+  if (!saved) return {};
+  const estimated = pick?.haversineKeys;
+  if (!estimated?.length) return saved;
+  const skip = new Set(estimated);
+  return Object.fromEntries(Object.entries(saved).filter(([key]) => !skip.has(key)));
+}
+
+/**
+ * 아직 내부 순서를 확정하지 않은 첫 클러스터의 방문 순번 위치. 전부 확정했으면 **-1**.
+ *
+ * "전부 확정"일 때 무엇을 돌려줄지는 부르는 쪽마다 다르다 — 수동 화면은 첫 클러스터를
+ * 보여주고, 자동 계산은 "더 할 일 없음"으로 읽는다. 그 해석을 함수 안에 숨기면 같은 이름이
+ * 두 가지 뜻을 갖게 되므로(실제로 그렇게 갈라져 있었다) -1만 돌려주고 판단은 호출부에 맡긴다.
+ */
+export function firstUnconfirmedIndex(
+  clusterOrder: readonly number[],
+  picks: Readonly<Record<number, { innerOrder?: number[] }>>,
+): number {
+  return clusterOrder.findIndex((id) => picks[id]?.innerOrder === undefined);
+}
+
 /** 클러스터 id → 사용자의 진입·이탈 선택과 계산 결과(스토어의 `clusterPicks` 모양). */
 export type ClusterPicks = Readonly<
   Record<number, Pick<Cluster, 'entry' | 'exit' | 'innerOrder' | 'timeMatrix' | 'haversineFallbacks'>>
@@ -191,22 +229,6 @@ export function groupOfNode(groups: readonly PrimaryGroup[]): Map<number, number
   return map;
 }
 
-/** 노드 id → 소속 클러스터 id. */
-export function clusterOfNode(
-  groups: readonly PrimaryGroup[],
-  clusters: readonly Cluster[],
-): Map<number, number> {
-  const clusterOfGroup = new Map<number, number>();
-  for (const cluster of clusters) {
-    for (const groupId of cluster.groupIds) clusterOfGroup.set(groupId, cluster.id);
-  }
-  const map = new Map<number, number>();
-  for (const [nodeId, groupId] of groupOfNode(groups)) {
-    const clusterId = clusterOfGroup.get(groupId);
-    if (clusterId !== undefined) map.set(nodeId, clusterId);
-  }
-  return map;
-}
 
 /** 최종 순서대로 이은 전체 경로 좌표(출발지가 있으면 맨 앞에 붙인다). */
 export function fullPathPoints(
