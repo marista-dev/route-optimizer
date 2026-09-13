@@ -9,6 +9,7 @@ import {
   type Node,
   type Origin,
   type PrimaryGroup,
+  type RouteMode,
   type Row,
   type Session,
   type Step,
@@ -16,6 +17,12 @@ import {
 
 /** localStorage 키. 스키마가 바뀌면 뒤에 버전을 붙인다. */
 const STORAGE_KEY = 'route-optimizer-session';
+
+/**
+ * 출발지를 가리키는 가짜 1차 그룹 id. 출발지는 `buildPrimaryGroups`가 만드는
+ * 그룹이 아니라서 실제 그룹 id(0부터)와 절대 겹치지 않는 음수를 쓴다.
+ */
+export const ORIGIN_GROUP_ID = -1;
 
 /** 카카오 REST 키를 담는 sessionStorage 키. localStorage에는 절대 쓰지 않는다. */
 const REST_KEY_STORAGE = 'kakao-rest-key';
@@ -61,6 +68,8 @@ export interface ClusterPick {
 interface SessionActions {
   /** 스테퍼 단계 이동 */
   setStep: (step: Step) => void;
+  /** 경로 모드 전환. 이미 받아 둔 클러스터 도로시간 등은 건드리지 않는다(확인은 화면 쪽 책임) */
+  setMode: (mode: RouteMode) => void;
   /** 출발지 확정(또는 null로 해제) */
   setOrigin: (origin: Origin | null) => void;
   /** 파일 파싱 결과 반영. 이후 단계 산출물은 모두 초기화한다 */
@@ -97,6 +106,11 @@ interface SessionActions {
   clearClusterPick: (clusterId: number) => void;
   /** 최종 배송 순서 저장 */
   setFinalOrder: (finalOrder: number[]) => void;
+  /**
+   * 자동 모드가 새로 받아 온 클러스터 대표 1차 그룹 간 도로시간을 기존 행렬 위에 얹는다.
+   * 재실행 때 이미 값을 치른 쌍을 다시 사지 않으려고 세션에 누적한다.
+   */
+  mergeClusterTimes: (times: Record<string, number>, fallbackKeys: readonly string[]) => void;
   /** 출발지를 제외한 모든 작업 상태를 지운다("처음부터") */
   reset: () => void;
 }
@@ -113,11 +127,20 @@ interface SessionMeta {
   savedAt: number;
   /** 클러스터 id → 진입·이탈·내부 순서. `clusters` 배열과 분리해 둔다 */
   clusterPicks: Record<number, ClusterPick>;
+  /**
+   * 클러스터 대표 1차 그룹 사이의 도로시간(초). 키는 `"fromGroupId-toGroupId"`.
+   * 출발지는 그룹이 아니므로 id `ORIGIN_GROUP_ID`(-1)를 쓴다.
+   * 자동 모드가 쓰고, 비싸게 산 값이라 세션에 보관해 재실행 때 재사용한다.
+   */
+  clusterTimeMatrix: Record<string, number>;
+  /** 그중 도로시간을 못 받아 직선거리로 메운 칸의 키. 재실행 때 이 칸만 다시 받는다 */
+  clusterHaversineKeys: string[];
 }
 
 /** 새 작업의 초기 상태. 출발지는 `reset` 시에도 유지하려고 따로 다룬다. */
 const initialSession: Session = {
   step: 1,
+  mode: 'manual',
   origin: null,
   fileName: '',
   sheetName: null,
@@ -131,6 +154,57 @@ const initialSession: Session = {
   clusterOrder: [],
   finalOrder: [],
 };
+
+/**
+ * `SessionMeta`에서 "새 세션(= `savedAt`이 갱신되지 않는 것) 시작 시 어떤 값으로
+ * 되돌아가는가"를 규정하는 부분. `savedAt`만 빼면 `SessionMeta` 전체다.
+ *
+ * 이 타입에 필드를 하나 추가했는데 아래 {@link initialMeta}를 채우지 않으면
+ * **타입 오류가 난다**(누락된 프로퍼티) — `setNodes`/`reset`처럼 여러 액션이
+ * 손으로 나열하던 것과 달리, 여기 하나만 고치면 store 초기화·`reset`·
+ * {@link clearedByNodes}에 자동으로 반영된다(F5).
+ */
+type ClearableMeta = Omit<SessionMeta, 'savedAt'>;
+const initialMeta: ClearableMeta = {
+  clusterPicks: {},
+  clusterTimeMatrix: {},
+  clusterHaversineKeys: [],
+};
+
+/**
+ * 노드가 바뀌면(`setFile`/`setNodes`) 지워야 하는 모든 산출물.
+ * 그룹 id가 통째로 달라지므로 그 id에 의존하는 모든 것을 지운다.
+ * `nodes` 자체는 호출부마다 값이 다르므로(하나는 `[]`, 하나는 새 배열) 여기 없다.
+ */
+const clearedByNodes = (): { groups: PrimaryGroup[]; clusters: Cluster[] } & Pick<
+  Session,
+  'clusterOrder' | 'finalOrder'
+> &
+  ClearableMeta => ({
+  groups: [],
+  clusters: [],
+  clusterOrder: [],
+  finalOrder: [],
+  ...initialMeta,
+});
+
+/**
+ * 클러스터(2차 묶음)가 바뀌면(`setClusters`) 지워야 하는 것.
+ * `clusterTimeMatrix`/`clusterHaversineKeys`는 **일부러 뺀다** — 그룹 id는
+ * 그대로라 여전히 유효하고, 비싸게 산 값이라 남긴다(`setClusters` 주석 참고).
+ */
+const clearedByClusters = (): Pick<Session, 'clusterOrder' | 'finalOrder'> &
+  Pick<ClearableMeta, 'clusterPicks'> => ({
+  clusterOrder: [],
+  finalOrder: [],
+  clusterPicks: {},
+});
+
+/** 방문 순서(진입·이탈 포함)가 바뀌면 지워야 하는 것. */
+const clearedByOrder = (): Pick<Session, 'finalOrder'> & Pick<ClearableMeta, 'clusterPicks'> => ({
+  finalOrder: [],
+  clusterPicks: {},
+});
 
 /**
  * 작업 세션 스토어. localStorage에 저장되어 새로고침·재접속 시 "이어서 하기"를 제공한다.
@@ -170,12 +244,16 @@ export const useSessionStore = create<SessionStore>()(
     (set) => ({
       ...initialSession,
       savedAt: 0,
-      clusterPicks: {},
+      ...initialMeta,
 
       setStep: (step) => set({ step, ...touch() }),
 
+      setMode: (mode) => set({ mode, ...touch() }),
+
       setOrigin: (origin) => set({ origin, ...touch() }),
 
+      // 행렬 키는 1차 그룹 id 쌍이고, 그룹 id는 `nodes` 순서로 매겨진다(grouping.ts).
+      // 파일을 새로 읽으면 노드 자체가 갈리므로 행렬도 함께 버린다.
       setFile: (fileName, sheetName, addressColumn, headers, rows) =>
         set({
           fileName,
@@ -184,35 +262,31 @@ export const useSessionStore = create<SessionStore>()(
           headers,
           rows,
           nodes: [],
-          groups: [],
-          clusters: [],
-          clusterOrder: [],
-          finalOrder: [],
-          clusterPicks: {},
+          ...clearedByNodes(),
           ...touch(),
         }),
 
       // 주소를 고치면 노드 좌표·단지 키가 달라지므로 그룹 이후 산출물은 모두 버린다.
+      // 행렬 키(1차 그룹 id 쌍)도 옛 그룹 id를 가리키게 되므로 함께 버린다.
       setNodes: (nodes) =>
         set({
           nodes,
-          groups: [],
-          clusters: [],
-          clusterOrder: [],
-          finalOrder: [],
-          clusterPicks: {},
+          ...clearedByNodes(),
           ...touch(),
         }),
 
       setThreshold: (thresholdM) => set({ thresholdM, ...touch() }),
 
+      // clusterTimeMatrix/clusterHaversineKeys는 여기서 지우지 않는다.
+      // 임계값을 바꿔도 buildPrimaryGroups(nodes)의 결과(= 1차 그룹과 그 id)는
+      // 그대로다 — 달라지는 건 그 그룹들을 어떻게 묶느냐(2차 클러스터)뿐이다.
+      // 행렬 키는 그룹 id 쌍이라 여전히 유효하고, 비싸게 산 값이니 남긴다.
+      // (그래서 clearedByNodes()가 아니라 clusterTimeMatrix를 뺀 clearedByClusters()를 쓴다.)
       setClusters: (groups, clusters) =>
         set({
           groups,
           clusters,
-          clusterOrder: [],
-          finalOrder: [],
-          clusterPicks: {},
+          ...clearedByClusters(),
           ...touch(),
         }),
 
@@ -221,12 +295,16 @@ export const useSessionStore = create<SessionStore>()(
        * 다만 **실제로 달라졌을 때만** 버린다 — S4의 주 조작이 지도 클릭이라, 지도를
        * 끌다 다각형을 스치거나 잘못 눌러 되돌리는 일이 잦다. 값이 같은데도 버리면
        * 그 한 번의 미스클릭이 이미 값을 치른 도로시간까지 전부 날린다.
+       *
+       * 이 `sameOrder` 분기를 "단순화"하며 지우고 싶다면, 그 전에
+       * `session.test.ts`의 '같은 순서를 다시 넣으면…' 테스트부터 보라.
+       * 이 분기 하나가 자동 모드 기준 약 1,800회의 유료 호출을 지킨다.
        */
       setClusterOrder: (clusterOrder) =>
         set((state) =>
           sameOrder(state.clusterOrder, clusterOrder)
             ? { clusterOrder, ...touch() }
-            : { clusterOrder, finalOrder: [], clusterPicks: {}, ...touch() },
+            : { clusterOrder, ...clearedByOrder(), ...touch() },
         ),
 
       clearClusterPick: (clusterId) =>
@@ -262,13 +340,31 @@ export const useSessionStore = create<SessionStore>()(
 
       setFinalOrder: (finalOrder) => set({ finalOrder, ...touch() }),
 
+      mergeClusterTimes: (times, fallbackKeys) =>
+        set((state) => {
+          const clusterTimeMatrix = { ...state.clusterTimeMatrix, ...times };
+          // 예전엔 추정치였던 칸이라도 이번에 실제 도로시간을 받았으면 더 이상
+          // 추정 칸이 아니다. 그래서 "예전 추정 칸 ∪ 이번 추정 칸"에서 이번에
+          // 실제 값을 받은 키(= times에는 있지만 이번 fallbackKeys엔 없는 키)를 뺀다.
+          const fallbackSet = new Set(fallbackKeys);
+          const nextHaversine = new Set([...state.clusterHaversineKeys, ...fallbackKeys]);
+          for (const key of Object.keys(times)) {
+            if (!fallbackSet.has(key)) nextHaversine.delete(key);
+          }
+          return {
+            clusterTimeMatrix,
+            clusterHaversineKeys: [...nextHaversine],
+            ...touch(),
+          };
+        }),
+
       /** 출발지는 다음 작업에서도 그대로 쓰므로 남긴다(계획 5절 settings.py 대응). */
       reset: () =>
         set((state) => ({
           ...initialSession,
           origin: state.origin,
           savedAt: 0,
-          clusterPicks: {},
+          ...initialMeta,
         })),
     }),
     {

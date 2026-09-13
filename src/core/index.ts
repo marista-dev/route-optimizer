@@ -40,7 +40,10 @@ export {
 } from './intraRoute';
 export type {
   Block,
-  TimeSecFn,
   IntraRouteResult,
   EntryExitSuggestion,
 } from './intraRoute';
+// TimeSecFn은 intraRoute/clusterRoute가 공유하는 계약이라 `../types`에 산다(F13).
+export type { TimeSecFn } from '../types';
+
+export { orderClusters } from './clusterRoute';

@@ -98,6 +98,15 @@ export interface PrimaryGroup {
   lon: number;
 }
 
+/**
+ * 도로시간(초) 조회 함수. 1차 그룹 id 쌍을 받는다.
+ *
+ * `core/intraRoute.ts`(클러스터 내부 순서)와 `core/clusterRoute.ts`(클러스터 간
+ * 순서)가 공유하는 계약이라 여기 둔다. 전에는 `intraRoute.ts`에 있어서 클러스터
+ * 간 순서 모듈이 클러스터 내부 순서 모듈을 가리키는 방향이 꼬여 있었다.
+ */
+export type TimeSecFn = (fromGroupId: number, toGroupId: number) => number;
+
 /** 2차 클러스터 = 임계값(기본 400m) 안에서 Union-Find로 묶인 1차 그룹 덩어리. */
 export interface Cluster {
   /** 클러스터 고유 id(0부터 순번) */
@@ -133,10 +142,19 @@ export interface Origin {
 /** 6단계 스테퍼의 현재 단계. 1=시작 … 6=결과 */
 export type Step = 1 | 2 | 3 | 4 | 5 | 6;
 
+/**
+ * 경로를 정하는 방식. 시작 화면에서 고른다.
+ * - `manual`: 클러스터 순서·진입이탈을 사용자가 지도에서 고른다
+ * - `auto`: 도로시간을 받아 앱이 정한다
+ */
+export type RouteMode = 'manual' | 'auto';
+
 /** localStorage에 저장되는 작업 세션 전체. REST 키는 여기 포함되지 않는다. */
 export interface Session {
   /** 현재 단계 */
   step: Step;
+  /** 경로를 정하는 방식 */
+  mode: RouteMode;
   /** 출발지. 미선택이면 null */
   origin: Origin | null;
   /** 업로드한 파일명 */

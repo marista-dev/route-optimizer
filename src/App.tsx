@@ -1,5 +1,6 @@
 import { Stepper, Toast } from './components';
 import {
+  AutoRouteScreen,
   ClusterScreen,
   EntryExitScreen,
   GeocodeScreen,
@@ -24,6 +25,7 @@ const SCREENS: Record<Step, () => React.JSX.Element> = {
 function App() {
   const savedStep = useSessionStore((s) => s.step);
   const setStep = useSessionStore((s) => s.setStep);
+  const mode = useSessionStore((s) => s.mode);
 
   const hasKey = useVolatileStore((s) => s.hasKey);
   const reset = useSessionStore((s) => s.reset);
@@ -31,7 +33,9 @@ function App() {
   // 저장된 세션을 아직 이어받지 않았으면 단계와 무관하게 S1(키 재입력)부터 시작한다.
   const resumePending = useVolatileStore((s) => s.resumePending);
   const step: Step = resumePending ? 1 : savedStep;
-  const Screen = SCREENS[step];
+  // 자동 모드는 4번 자리에 순서배정 대신 자동 계산 화면을 그리고, 5번(진입·이탈)은
+  // 아예 방문하지 않는다(`Step` 타입 자체는 그대로 1~6이다).
+  const Screen = mode === 'auto' && step === 4 ? AutoRouteScreen : SCREENS[step];
 
   return (
     <div className="ro-app">
@@ -46,7 +50,7 @@ function App() {
           />
           <div className="ro-brand__name">배송 경로 최적화</div>
         </div>
-        <Stepper current={step} onGo={setStep} />
+        <Stepper current={step} mode={mode} onGo={setStep} />
         <div className="ro-headchips">
           <div className={`ro-chip${hasKey ? ' is-on' : ''}`}>
             <span className="ro-chip__dot" />

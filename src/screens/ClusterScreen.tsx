@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 
 import { MapFit, SidePanel } from '../components';
-import { buildClusters, buildPrimaryGroups } from '../core';
+import { buildBlocks, buildClusters, buildPrimaryGroups } from '../core';
 import { ClusterLayer, MapCanvas, MarkerLayer } from '../map';
 import { useSessionStore } from '../store/session';
 import { DEFAULT_THRESHOLD_M, type LatLng } from '../types';
@@ -35,10 +35,14 @@ const INFO_MAX_LINES = 12;
 /** 슬라이더에서 손을 뗀 것으로 보고 스토어에 값을 넣기까지 기다리는 시간(ms). */
 const THRESHOLD_SAVE_DELAY_MS = 300;
 
+/** 카카오 REST API 일일 호출 한도. 자동 모드의 예상 호출 수를 가늠하는 잣대로 쓴다. */
+const KAKAO_DAILY_QUOTA = 10000;
+
 /** S3 클러스터링 — 임계값 슬라이더 + 다각형 미리보기. */
 export function ClusterScreen() {
   const nodes = useSessionStore((s) => s.nodes);
   const origin = useSessionStore((s) => s.origin);
+  const mode = useSessionStore((s) => s.mode);
   const storedThreshold = useSessionStore((s) => s.thresholdM);
   const setThreshold = useSessionStore((s) => s.setThreshold);
   const setClusters = useSessionStore((s) => s.setClusters);
@@ -113,12 +117,31 @@ export function ClusterScreen() {
   );
   const savedWork = orderedCount > 0 || pickCount > 0;
 
+  /*
+   * 자동 모드의 예상 API 호출 수(최대치). 이미 clusterTimeMatrix에 값을 받아 둔
+   * 쌍도 빼지 않고 전부 센다 — 재실행이면 실제로는 더 적게 부른다는 점은 문구로 밝힌다.
+   *  - 클러스터 간: 출발지가 있으면 대표 N곳 각각 출발지-대표 왕복까지 더해 N + N×(N-1),
+   *    없으면 대표끼리만 N×(N-1)
+   *  - 클러스터 내부: 클러스터마다 서로 다른 단지(complexKey) 블록 수 k에 대해 k×(k-1)의 합
+   */
+  const autoApiCalls = useMemo(() => {
+    const n = clusters.length;
+    const cross = n === 0 ? 0 : origin ? n + n * (n - 1) : n * (n - 1);
+    const inner = clusters.reduce((sum, c) => {
+      const k = buildBlocks(c, groups).length;
+      return sum + k * (k - 1);
+    }, 0);
+    return cross + inner;
+  }, [clusters, groups, origin]);
+
   const clusterHint =
-    clusters.length < RECOMMEND_MIN
-      ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 한 클러스터가 너무 크면 임계값을 내려 나누세요.`
-      : clusters.length > RECOMMEND_MAX
-        ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 줄이려면 임계값을 올리세요.`
-        : `권장 범위(${RECOMMEND_MIN}~${RECOMMEND_MAX}개) 안입니다. 다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다.`;
+    mode === 'auto'
+      ? `자동 모드는 지도 클릭이 없는 대신 API를 씁니다. 예상 호출은 최대 약 ${autoApiCalls.toLocaleString()}회로, 카카오 일일 한도 ${KAKAO_DAILY_QUOTA.toLocaleString()}회의 약 ${Math.round((autoApiCalls / KAKAO_DAILY_QUOTA) * 100)}%입니다. 이미 받아 둔 도로시간은 빼지 않은 값이라 재실행이면 실제로는 더 적게 호출합니다.`
+      : clusters.length < RECOMMEND_MIN
+        ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 한 클러스터가 너무 크면 임계값을 내려 나누세요.`
+        : clusters.length > RECOMMEND_MAX
+          ? `다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다. 줄이려면 임계값을 올리세요.`
+          : `권장 범위(${RECOMMEND_MIN}~${RECOMMEND_MAX}개) 안입니다. 다음 단계에서 지도 클릭이 ${clusters.length}번 필요합니다.`;
 
   const memberSummary = useCallback(
     (clusterId: number): string => {
@@ -230,7 +253,7 @@ export function ClusterScreen() {
                   setStep(4);
                 }}
               >
-                순서배정
+                {mode === 'auto' ? '자동 계산' : '순서배정'}
                 <ArrowRight size={18} />
               </button>
             </>

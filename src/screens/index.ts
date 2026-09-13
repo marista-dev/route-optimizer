@@ -1,3 +1,4 @@
+export { AutoRouteScreen } from './AutoRouteScreen';
 export { ClusterScreen } from './ClusterScreen';
 export { EntryExitScreen } from './EntryExitScreen';
 export { GeocodeScreen } from './GeocodeScreen';
