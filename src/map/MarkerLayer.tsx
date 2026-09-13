@@ -57,6 +57,13 @@ export function MarkerLayer({
 }: MarkerLayerProps) {
   const { map } = useMapContext();
 
+  /**
+   * 클릭을 받는 화면에서만 커서·클릭 타깃을 켠다(S3·S4는 이 콜백을 안 준다).
+   * 생성 effect의 dep에 넣어야 한다 — `groups` 정체성이 안 바뀐 채로 이 값만
+   * 바뀌면(4번의 `interactive`와 같은 이유) 클릭 가능 여부가 낡은 채로 남는다.
+   */
+  const hasClickHandler = Boolean(onGroupClick);
+
   const latest = useRef({
     map,
     visibleGroupIds,
@@ -118,6 +125,8 @@ export function MarkerLayer({
       }
       if (cur.entryGroupId === entry.id) classes.push('is-entry');
       if (cur.exitGroupId === entry.id) classes.push('is-exit');
+      // 누를 데가 없으면 손가락 커서로 클릭 가능한 척하지 않는다(S3·S4).
+      if (cur.onGroupClick) classes.push('is-clickable');
       const isHighlight = cur.highlightGroupId === entry.id;
       if (isHighlight) {
         classes.push('is-highlight');
@@ -185,7 +194,7 @@ export function MarkerLayer({
         xAnchor: 0.5,
         yAnchor: 0.5,
         zIndex: Z_MARKER,
-        clickable: true,
+        clickable: hasClickHandler,
       });
       overlay.setMap(map);
 
@@ -215,9 +224,9 @@ export function MarkerLayer({
       labelRef.current = null;
       entriesRef.current = [];
     };
-  }, [map, groups, applyStates]);
+  }, [map, groups, applyStates, hasClickHandler]);
 
-  // 진입·이탈·가시성·라벨·강조 변경 반영.
+  // 진입·이탈·가시성·라벨·강조·클릭 가능 여부 변경 반영.
   useEffect(() => {
     applyStates();
   }, [
@@ -229,6 +238,7 @@ export function MarkerLayer({
     tooltipOf,
     highlightGroupId,
     highlightText,
+    onGroupClick,
   ]);
 
   // 출발지 마커.

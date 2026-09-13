@@ -39,6 +39,12 @@ export interface DragReorder {
   dragFrom: number | null;
   /** 삽입될 위치(0..length). 끌고 있지 않으면 null */
   dropAt: number | null;
+  /**
+   * 삽입선을 그릴 자리. `dropAt`과 달리 제자리(자기 앞/뒤)는 `null`로 걸러져 있다 —
+   * 그 자리에 선을 그리면 "놓아도 안 옮겨지는 자리"가 생긴다. 호출부는 삽입선
+   * 표시에 `dropAt`이 아니라 이 값을 써야 한다.
+   */
+  dropLine: number | null;
   /** 항목의 onDragStart에 연결 */
   onItemDragStart: (index: number) => void;
   /** 항목·컨테이너의 onDragEnd에 연결 */
@@ -160,5 +166,10 @@ export function useDragReorder(onMove: (from: number, to: number) => void): Drag
     };
   }, [dragFrom, finish, stopScroll]);
 
-  return { listRef, dragFrom, dropAt, onItemDragStart, onDragEnd: finish };
+  // 제자리(자기 앞/자기 뒤)에 놓으면 targetIndex가 null을 돌려준다 — 그 자리는
+  // 삽입선도 그리지 않는다. 여기서 한 번만 걸러 두면 호출부가 매번 다시 계산할 필요가 없다.
+  const dropLine =
+    dragFrom !== null && dropAt !== null && targetIndex(dropAt, dragFrom) !== null ? dropAt : null;
+
+  return { listRef, dragFrom, dropAt, dropLine, onItemDragStart, onDragEnd: finish };
 }

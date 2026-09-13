@@ -25,3 +25,5 @@ export type { RefPoint, RefPointKind, RefPointLayerProps } from './RefPointLayer
 
 export { OrderLinkLayer } from './OrderLinkLayer';
 export type { OrderLinkLayerProps } from './OrderLinkLayer';
+
+export { MAP_COLOR } from './palette';

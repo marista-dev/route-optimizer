@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useMapContext } from './MapContext';
+import { MAP_COLOR } from './palette';
 import type { Cluster } from '../types';
 
 /**
@@ -8,6 +9,8 @@ import type { Cluster } from '../types';
  * - `info`: S3. hover 정보 + click 인포윈도우
  * - `order`: S4. 순번이 매겨진 클러스터를 완료색으로 칠하고 중심에 큰 번호를 띄운다
  * - `dim`: S5. `activeClusterId` 하나만 선명하게 두고 나머지는 흐리게
+ *
+ * 각 모드가 정확히 무엇을 켜는지는 아래 {@link MODE} 표 하나에 모여 있다.
  */
 export type ClusterMode = 'info' | 'order' | 'dim';
 
@@ -41,19 +44,19 @@ export interface ClusterLayerProps {
   highlightClusterId?: number;
 }
 
-// Claude Design 핸드오프에서 가져온 지도 팔레트.
+// `palette.ts`의 지도 팔레트. 다른 레이어·화면과 같은 상수를 쓴다.
 /** 기본(브랜드 파랑) — 다각형·순번 라벨·경로선이 모두 이 색이다 */
-const BASE_STROKE = '#1E4ED8';
-const BASE_FILL = '#1E4ED8';
+const BASE_STROKE = MAP_COLOR.base;
+const BASE_FILL = MAP_COLOR.base;
 /** 확정된 클러스터 */
-const DONE_STROKE = '#16A34A';
-const DONE_FILL = '#16A34A';
+const DONE_STROKE = MAP_COLOR.done;
+const DONE_FILL = MAP_COLOR.done;
 /** S5에서 다음에 갈 클러스터 — "여기로 빠져나간다"를 빨강으로 못 박는다 */
-const NEXT_STROKE = '#DC2626';
-const NEXT_FILL = '#DC2626';
+const NEXT_STROKE = MAP_COLOR.next;
+const NEXT_FILL = MAP_COLOR.next;
 /** S5에서 아직 손대지 않은(흐린) 클러스터 */
-const IDLE_STROKE = '#9AA1AC';
-const IDLE_FILL = '#5B6370';
+const IDLE_STROKE = MAP_COLOR.idleStroke;
+const IDLE_FILL = MAP_COLOR.idleFill;
 
 const FILL_OPACITY = 0.15;
 const FILL_OPACITY_ORDERED = 0.28;
@@ -75,13 +78,35 @@ const STROKE_WEIGHT_ACTIVE = 3;
 const Z_ORDER_BADGE = 10;
 
 /**
- * 중심 히트 타깃의 지름(px). map.css의 44px을 덮어쓴다.
+ * 중심 히트 타깃의 지름(px). 이 값이 유일한 출처다 — map.css는 크기를 정하지 않는다.
  * 44px 원이 화면에 30~40개 흩어지면 지도를 끌려고 누른 지점이 자주 원 안에 걸려
- * "가끔 지도가 안 움직인다"가 된다. 클릭은 여전히 넉넉한 선까지 줄였다.
+ * "가끔 지도가 안 움직인다"가 된다(이미 44→32로 한 번 줄인 이력이 있다).
+ * 클릭은 여전히 넉넉한 선까지 줄였다.
  */
 const HIT_SIZE_PX = 32;
 /** 이만큼 넘게 끌었으면 클릭으로 치지 않는다(지도를 옮기려던 손). */
 const DRAG_SLOP_PX = 5;
+
+/**
+ * 모드별로 무엇이 켜지는지 한곳에서 본다.
+ * 전에는 "이 모드가 무엇을 켜는가"에 답하려면 파일 곳곳의 `mode === '…'` 분기
+ * 7곳을 다 읽어야 했다. 새 모드를 넣거나 기존 동작을 바꿀 때 이 표 한 줄만 보면 된다.
+ */
+const MODE: Record<ClusterMode, {
+  /** 중심 히트 타깃을 만든다(:hitTarget 사용처의 생성 effect) */
+  hitTarget: boolean;
+  /** 클릭 시 인포윈도우를 연다({@link ClusterLayer}의 `select`) */
+  infoWindow: boolean;
+  /** 순번 배지를 띄우고, 미지정 클러스터를 "아직 미지정"이라 부르며 흐리게 칠한다
+   *  ({@link pickState}의 `unordered`, {@link defaultLabel}, `applyStyles`의 `ordered`) */
+  orderBadge: boolean;
+  /** active/prev/next/done 이외는 흐리게 민다(`applyStyles`의 `dim`) */
+  dimOthers: boolean;
+}> = {
+  info: { hitTarget: true, infoWindow: true, orderBadge: false, dimOthers: false },
+  order: { hitTarget: true, infoWindow: false, orderBadge: true, dimOthers: false },
+  dim: { hitTarget: false, infoWindow: false, orderBadge: false, dimOthers: true },
+};
 
 /** {@link applyStyles}가 매 다각형마다 계산하는 표시 상태 하나. */
 type ClusterVisualState =
@@ -103,7 +128,7 @@ function pickState(
   if (done) return 'done';
   if (idle) return 'idle';
   if (ordered) return 'ordered';
-  if (mode === 'order') return 'unordered';
+  if (MODE[mode].orderBadge) return 'unordered';
   return 'base';
 }
 
@@ -157,7 +182,7 @@ function defaultLabel(
 ): string {
   const head = order
     ? `${order}번째 방문`
-    : mode === 'order'
+    : MODE[mode].orderBadge
       ? '아직 미지정'
       : `클러스터 ${cluster.id + 1}`;
   // 건수를 모르면 그룹 수를 그룹 수라고 부른다. 목록·통계의 "배송지 n건"은 배송 건수다.
@@ -181,6 +206,21 @@ export function ClusterLayer({
   highlightClusterId,
 }: ClusterLayerProps) {
   const { map } = useMapContext();
+
+  /**
+   * 클릭을 받는 화면에서만 중심 히트 타깃을 만든다(S3 정보 · S4 순서).
+   * 생성 effect 안에서 `latest.current`로 한 번만 읽으면, 그 effect의 dep(`clusters`
+   * 정체성)이 안 바뀐 채로 `mode`나 `onClusterClick`만 바뀔 때 히트 타깃 유무가
+   * 낡은 채로 남는다 — 지금은 화면마다 모드가 고정이고 전환 시 컴포넌트째 다시
+   * 마운트돼 드러나지 않지만, 그 전제가 깨지면 클릭이 조용히 죽거나 살아난다.
+   * `useMemo`로 뽑아 생성 effect의 dep에 넣어 둔다.
+   */
+  const interactive = useMemo(
+    () =>
+      MODE[mode].hitTarget &&
+      (Boolean(onClusterClick) || (MODE[mode].infoWindow && Boolean(memberSummary))),
+    [mode, onClusterClick, memberSummary],
+  );
 
   // 리스너는 한 번만 붙이므로 최신 props는 ref로 읽는다.
   const latest = useRef({
@@ -222,8 +262,8 @@ export function ClusterLayer({
     const cur = latest.current;
     for (const entry of entriesRef.current) {
       const order = cur.orderOf(entry.id);
-      const ordered = cur.mode === 'order' && order !== undefined;
-      const dim = cur.mode === 'dim';
+      const ordered = MODE[cur.mode].orderBadge && order !== undefined;
+      const dim = MODE[cur.mode].dimOthers;
       const active = dim && cur.activeClusterId === entry.id;
       const prev = dim && !active && cur.prevClusterId === entry.id;
       const next = dim && !active && !prev && cur.nextClusterId === entry.id;
@@ -268,10 +308,6 @@ export function ClusterLayer({
 
     const listeners: Array<[any, string, (event: any) => void]> = [];
     const domCleanups: Array<() => void> = [];
-    // 클릭을 받는 화면에서만 중심 히트 타깃을 만든다(S3 정보 · S4 순서).
-    const interactive =
-      Boolean(latest.current.onClusterClick) ||
-      (latest.current.mode === 'info' && Boolean(latest.current.memberSummary));
 
     const entries: ClusterEntry[] = clusters.map((cluster) => {
       const path = cluster.hull.map(
@@ -334,7 +370,7 @@ export function ClusterLayer({
       /** 다각형·히트 타깃이 공유하는 선택 동작. `ll`은 카카오 LatLng. */
       const select = (ll: any) => {
         const cur = latest.current;
-        if (cur.mode === 'info' && cur.memberSummary) {
+        if (MODE[cur.mode].infoWindow && cur.memberSummary) {
           infoWindow.setContent(cur.memberSummary(cluster.id));
           infoWindow.setPosition(ll);
           infoWindow.setMap(cur.map);
@@ -431,7 +467,7 @@ export function ClusterLayer({
       infoWindow.setMap(null);
       entriesRef.current = [];
     };
-  }, [map, clusters, applyStyles]);
+  }, [map, clusters, applyStyles, interactive]);
 
   // 모드·순번·활성 클러스터가 바뀌면 옵션만 다시 칠한다.
   useEffect(() => {

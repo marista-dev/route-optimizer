@@ -70,13 +70,18 @@
   padding: 0 5px;
   border-radius: 9px;
   border: 2px solid #fff;
-  background: #1e4ed8;
+  background: var(--primary);
   color: #fff;
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
-  cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* onGroupClick이 있는 화면에서만 켠다(MarkerLayer.tsx의 `is-clickable`) —
+   S3·S4는 마커 클릭이 no-op이라 손가락 커서로 약속하지 않는다. */
+.ro-marker.is-clickable {
+  cursor: pointer;
 }
 
 /*
@@ -86,7 +91,7 @@
  * 크기는 자릿수에 따라 늘어난다(한 자리는 정원, 세 자리는 알약 모양).
  */
 .ro-marker.is-order {
-  background: #16a34a;
+  background: var(--success);
   /* 정원 유지: 가로는 늘리지 않고 자릿수에 따라 지름 자체를 키운다.
      padding을 주면 두 자리부터 타원이 된다. */
   padding: 0;
@@ -127,7 +132,7 @@
  * 중복 건수 배지나 다른 상태색과 헷갈린다.
  */
 .ro-marker.is-order.is-highlight {
-  background: #16a34a;
+  background: var(--success);
   transform: scale(1.45);
   box-shadow:
     0 0 0 4px rgba(22, 163, 74, 0.28),
@@ -146,17 +151,17 @@
   z-index: 1;
 }
 .ro-marker.is-entry {
-  background: #16a34a;
+  background: var(--success);
   box-shadow:
     0 0 0 3px #fff,
-    0 0 0 5px #16a34a,
+    0 0 0 5px var(--success),
     0 2px 6px rgba(0, 0, 0, 0.3);
 }
 .ro-marker.is-exit {
-  background: #dc2626;
+  background: var(--danger);
   box-shadow:
     0 0 0 3px #fff,
-    0 0 0 5px #dc2626,
+    0 0 0 5px var(--danger),
     0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
@@ -181,18 +186,18 @@
 }
 .ro-marker.is-entry::after {
   content: '↓ 진입';
-  background: #16a34a;
+  background: var(--success);
 }
 .ro-marker.is-exit::after {
   content: '↑ 이탈';
-  background: #dc2626;
+  background: var(--danger);
 }
 /* 진입·이탈이 같은 건물이면 한 줄로 합쳐 보여 준다. */
 .ro-marker.is-entry.is-exit {
-  background: #16a34a;
+  background: var(--success);
   box-shadow:
     0 0 0 3px #fff,
-    0 0 0 5px #16a34a,
+    0 0 0 5px var(--success),
     0 2px 6px rgba(0, 0, 0, 0.3);
 }
 .ro-marker.is-entry.is-exit::after {
@@ -235,11 +240,11 @@
 /*
  * 클러스터 중심 클릭 타깃.
  * 1건짜리 클러스터의 다각형은 실사용 배율에서 10px 안팎이라 클릭이 빗나간다.
- * 배율과 무관한 44px 투명 원을 중심에 얹어 "근처를 찍어도" 선택되게 한다.
+ * 배율과 무관한 원을 중심에 얹어 "근처를 찍어도" 선택되게 한다.
+ * 지름은 여기서 정하지 않는다 — ClusterLayer.tsx의 인라인 스타일이 항상 이기므로
+ * (`HIT_SIZE_PX`) 여기 적어도 무효다. 조정할 곳은 거기 하나뿐이다.
  */
 .ro-cluster-hit {
-  width: 44px;
-  height: 44px;
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
@@ -290,13 +295,13 @@
 }
 
 .ro-refpoint--prev {
-  background: #16a34a;
+  background: var(--success);
   color: #fff;
 }
 
 /* 다음 클러스터 — 다각형과 같은 빨강으로 맞춘다. */
 .ro-refpoint--next {
   background: #fff;
-  color: #dc2626;
-  border-color: #dc2626;
+  color: var(--danger);
+  border-color: var(--danger);
 }

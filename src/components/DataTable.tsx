@@ -44,27 +44,29 @@ export interface DataTableProps<T> {
   /** 마지막 행 뒤에 덧붙일 안내(진행 중 표시 등) */
   trailing?: ReactNode;
   /** 행에 마우스가 올라가거나(row) 벗어날 때(null). S6 결과 표 ↔ 지도 연동 */
-  onRowHover?: (row: T | null, index: number) => void;
-  /** 행 클릭 */
+  onRowHover?: (row: T | null) => void;
+  /**
+   * 행 클릭. 드래그 재정렬 중(`reorder`가 있을 때)에는 부르지 않는다 — 편집 중
+   * 드래그가 3px을 못 넘겨 실패하면 click이 발생하는데, 그때 지도까지 튀면 안 된다.
+   */
   onRowClick?: (row: T, index: number) => void;
   /**
-   * 행 드래그 재정렬을 켠다. `useDragReorder`와 함께 쓴다 —
-   * 훅이 `[data-reorder-item]`을 찾으므로 이 값이 참일 때만 그 속성이 붙는다.
+   * 행 드래그 재정렬. `useDragReorder`가 돌려주는 값을 그대로 넘긴다 — 다섯 개
+   * prop을 따로 받으면 "재정렬은 켰는데 핸들러가 없다" 같은 반쪽짜리 조합이 타입을
+   * 통과한다. 이 값이 있을 때만 행에 `[data-reorder-item]`이 붙는다.
    */
-  reorderable?: boolean;
-  /** 드래그 시작. `useDragReorder.onItemDragStart` 연결 */
-  onRowDragStart?: (index: number) => void;
-  /** 드래그 종료. `useDragReorder.onDragEnd` 연결 */
-  onRowDragEnd?: () => void;
-  /** 끌고 있는 행(흐리게 처리) */
-  dragFrom?: number | null;
-  /** 삽입될 위치(0..rows.length). 그 자리에 선을 긋는다 */
-  dropAt?: number | null;
+  reorder?: {
+    dragFrom: number | null;
+    /** 삽입선을 그릴 자리. `useDragReorder.dropLine`(제자리는 이미 걸러져 있다) */
+    dropLine: number | null;
+    onItemDragStart: (index: number) => void;
+    onDragEnd: () => void;
+  } | null;
   /**
    * 이 key의 행을 보이는 곳으로 스크롤한다(지도에서 고른 지점을 표에서 찾아 줄 때).
-   * 값이 바뀔 때만 동작하므로 같은 행을 다시 고르려면 호출부가 값을 바꿔 줘야 한다.
+   * 값이 바뀔 때만 동작하므로 같은 행을 다시 고르려면 호출부가 새 객체를 넣어야 한다.
    */
-  scrollToKey?: string | number | null;
+  scrollTo?: { key: string | number } | null;
 }
 
 /** 스티키 헤더 표. S2 검증 표와 S6 결과 표가 함께 쓴다. */
@@ -77,21 +79,20 @@ export function DataTable<T>({
   trailing,
   onRowHover,
   onRowClick,
-  reorderable = false,
-  onRowDragStart,
-  onRowDragEnd,
-  dragFrom = null,
-  dropAt = null,
-  scrollToKey = null,
+  reorder = null,
+  scrollTo = null,
 }: DataTableProps<T>) {
   const bodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const reorderable = reorder !== null;
+  const dragFrom = reorder?.dragFrom ?? null;
+  const dropLine = reorder?.dropLine ?? null;
 
   useEffect(() => {
-    if (scrollToKey == null) return;
+    if (scrollTo == null) return;
     const body = bodyRef.current;
     if (!body) return;
     const row = body.querySelector<HTMLElement>(
-      `[data-row-key="${CSS.escape(String(scrollToKey))}"]`,
+      `[data-row-key="${CSS.escape(String(scrollTo.key))}"]`,
     );
     if (!row) return;
 
@@ -110,7 +111,7 @@ export function DataTable<T>({
       headHeight -
       SCROLL_MARGIN_PX;
     scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-  }, [scrollToKey]);
+  }, [scrollTo]);
 
   return (
     <table className="ro-table">
@@ -139,18 +140,20 @@ export function DataTable<T>({
               reorderable ? 'is-reorderable' : null,
               reorderable && dragFrom === i ? 'is-drag' : null,
               // 삽입선은 그 자리 앞뒤 행에 그린다. tr은 margin이 먹지 않아 inset 그림자를 쓴다.
-              reorderable && dragFrom !== null && dropAt === i ? 'is-dropbefore' : null,
-              reorderable && dragFrom !== null && dropAt === rows.length && i === rows.length - 1
+              reorderable && dropLine === i ? 'is-dropbefore' : null,
+              reorderable && dropLine === rows.length && i === rows.length - 1
                 ? 'is-dropafter'
                 : null,
             ]
               .filter(Boolean)
               .join(' ') || undefined}
-            onDragStart={reorderable && onRowDragStart ? () => onRowDragStart(i) : undefined}
-            onDragEnd={reorderable ? onRowDragEnd : undefined}
-            onMouseEnter={onRowHover ? () => onRowHover(row, i) : undefined}
-            onMouseLeave={onRowHover ? () => onRowHover(null, i) : undefined}
-            onClick={onRowClick ? () => onRowClick(row, i) : undefined}
+            onDragStart={reorder ? () => reorder.onItemDragStart(i) : undefined}
+            onDragEnd={reorder ? reorder.onDragEnd : undefined}
+            onMouseEnter={onRowHover ? () => onRowHover(row) : undefined}
+            onMouseLeave={onRowHover ? () => onRowHover(null) : undefined}
+            // 재정렬 중에는 행 클릭을 끈다 — 드래그가 3px을 못 넘겨 click으로 판정되면
+            // (편집 중 흔하다) 지도가 그 지점으로 튀는 일이 없게 한다.
+            onClick={onRowClick && !reorderable ? () => onRowClick(row, i) : undefined}
           >
             {columns.map((col) => (
               <td

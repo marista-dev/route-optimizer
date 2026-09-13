@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 
 import { useMapContext } from './MapContext';
+import { MAP_COLOR } from './palette';
 import type { LatLng } from '../types';
 
 /** 경로선 모양. `dashed`는 순서 안내용, `solid`는 확정 경로용이다. */
@@ -11,12 +12,11 @@ export interface RouteLayerProps {
   paths: LatLng[][];
   /** 선 모양(기본 solid) */
   style?: RouteStyle;
-  /** 선 색(기본 브랜드 파랑 #1E4ED8) */
+  /** 선 색(기본 브랜드 파랑) */
   color?: string;
 }
 
-/** 핸드오프의 경로선 색(브랜드 파랑). */
-const DEFAULT_COLOR = '#1E4ED8';
+const DEFAULT_COLOR = MAP_COLOR.base;
 
 /** 좌표열들을 Polyline으로 그리는 레이어. */
 export function RouteLayer({

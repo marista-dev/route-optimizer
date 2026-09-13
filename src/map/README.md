@@ -15,6 +15,7 @@
 | `RouteLayer.tsx` | 좌표열들을 Polyline으로 |
 | `OrderLinkLayer.tsx` | 클러스터 중심을 방문 순서대로 잇는 점선 |
 | `RefPointLayer.tsx` | 클릭되지 않는 참고점 라벨(S5의 이전 위치 · 다음 클러스터 중심) |
+| `palette.ts` | 다각형·마커·경로선이 공유하는 의미 있는 색(`MAP_COLOR`). `map.css`는 같은 값을 `src/index.css`의 CSS 변수로 쓴다 |
 
 `MapCanvas`가 `map.css`를 import하므로 화면 쪽에서 CSS를 따로 넣을 필요는 없다.
 

@@ -93,9 +93,6 @@ input::placeholder {
 .ro-muted {
   color: var(--muted);
 }
-.ro-faint {
-  color: var(--faint);
-}
 .ro-warn-text {
   color: var(--warn);
 }
@@ -318,11 +315,6 @@ input::placeholder {
 .ro-btn--warn:hover:enabled {
   background: var(--warn);
   color: #fff;
-}
-.ro-btn--lg {
-  height: 40px;
-  padding: 0 20px;
-  font-size: 16px;
 }
 .ro-btn--xl {
   height: 52px;
@@ -1249,6 +1241,40 @@ input::placeholder {
   cursor: not-allowed;
 }
 
+/*
+ * S4-자동 확정 목록(AutoRouteScreen) — `.ro-orderitem`을 그대로 쓰되 드래그 손잡이·이동
+ * 버튼이 없다(읽기 전용 목록이라 손댈 것이 없다). 진행 중인 줄은 굵은 파란 테두리로
+ * 구분하고, 각 줄 오른쪽에 실제 호출·직선거리 대체 칸 수를 적어 신뢰도를 바로 보여준다.
+ */
+.ro-autorows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 읽기 전용 목록이다 — `.ro-orderitem` 기본값인 grab 커서를 끈다. */
+.ro-autorows .ro-orderitem {
+  cursor: default;
+}
+.ro-orderitem--current {
+  cursor: default;
+  border: 1.5px solid var(--primary);
+  background: var(--primary-tint-2);
+}
+.ro-autorows__badge {
+  flex: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+}
+.ro-autorows__stats {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: right;
+}
+
 /* S5 진입·이탈 */
 .ro-ee {
   padding: 12px 18px;
@@ -1377,10 +1403,7 @@ input::placeholder {
   gap: 8px;
   margin-top: 6px;
 }
-/*
- * 결과 다운로드 버튼 — CSV와 엑셀은 고르는 형식이 다를 뿐 우열이 없다.
- * 한쪽만 채워 칠하면 다른 쪽이 부차적이거나 비활성으로 읽혀 둘을 같은 모양으로 둔다.
- */
+/* 결과 다운로드(엑셀) 버튼 — 채운 배경으로 눈에 띄게 한다. */
 .ro-btn--dl {
   flex: 1;
   height: 38px;
@@ -1406,10 +1429,6 @@ input::placeholder {
   gap: 8px;
   font-size: 13px;
   color: var(--muted);
-}
-/* 경고도 재업로드도 없으면 이 줄은 통째로 없는 셈이 되어야 한다. */
-.ro-s6__notes:empty {
-  display: none;
 }
 .ro-s6__foot {
   display: flex;
@@ -1548,13 +1567,13 @@ input::placeholder {
 .ro-pulse__ring {
   width: 20px;
   height: 20px;
-  border: 3px solid var(--danger, #dc2626);
+  border: 3px solid var(--danger);
   animation: ro-pulse-ring 1.1s ease-out infinite;
 }
 .ro-pulse__dot {
   width: 12px;
   height: 12px;
-  background: var(--danger, #dc2626);
+  background: var(--danger);
   box-shadow: 0 0 0 3px #fff;
   animation: ro-pulse-dot 1.1s ease-in-out infinite;
 }

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { MAP_COLOR } from './palette';
 import { RouteLayer } from './RouteLayer';
 import type { Cluster, LatLng } from '../types';
 
@@ -12,8 +13,7 @@ export interface OrderLinkLayerProps {
   origin?: LatLng | null;
 }
 
-/** 핸드오프의 순서 점선 색(브랜드 파랑). */
-const DEFAULT_COLOR = '#1E4ED8';
+const DEFAULT_COLOR = MAP_COLOR.base;
 
 /** S4에서 클릭한 순서대로 클러스터 중심을 잇는 점선. */
 export function OrderLinkLayer({ clusters, clusterOrder, origin }: OrderLinkLayerProps) {
