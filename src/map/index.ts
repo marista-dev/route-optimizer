@@ -17,6 +17,9 @@ export type { ClusterLayerProps, ClusterMode } from './ClusterLayer';
 export { MarkerLayer } from './MarkerLayer';
 export type { MarkerLayerProps } from './MarkerLayer';
 
+export { MarkerPositions } from './MarkerPositions';
+export type { MarkerPositionsProps } from './MarkerPositions';
+
 export { RouteLayer } from './RouteLayer';
 export type { RouteLayerProps, RouteStyle } from './RouteLayer';
 

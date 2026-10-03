@@ -7,6 +7,7 @@ import {
   buildOrderMap,
   buildRecords,
   buildXlsx,
+  mapImageFileName,
   outputColumns,
   outputFileName,
 } from './writeFile';
@@ -54,6 +55,17 @@ describe('outputFileName', () => {
   it('확장자를 갈아끼우고 접미사를 붙인다', () => {
     expect(outputFileName('배송목록.xlsx', 'xlsx')).toBe('배송목록_배송순서완성.xlsx');
     expect(outputFileName('배송목록.csv', 'xlsx')).toBe('배송목록_배송순서완성.xlsx');
+  });
+});
+
+describe('mapImageFileName', () => {
+  it('확장자를 떼고 접미사와 번호를 붙인다', () => {
+    expect(mapImageFileName('배송목록.xlsx', 1)).toBe('배송목록_배송지도_1.png');
+    expect(mapImageFileName('배송목록.csv', 12)).toBe('배송목록_배송지도_12.png');
+  });
+
+  it('이름이 비면 result를 쓴다', () => {
+    expect(mapImageFileName('.xlsx', 2)).toBe('result_배송지도_2.png');
   });
 });
 

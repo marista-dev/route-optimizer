@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Download, GripVertical } from 'lucide-react';
+import { Camera, ChevronDown, ChevronUp, Download, GripVertical } from 'lucide-react';
 
-import { DataTable, MapPan, SidePanel, VerdictBadge } from '../components';
+import {
+  CaptureFrame,
+  CapturePreviewModal,
+  CaptureToolbar,
+  DataTable,
+  MapFit,
+  MapPan,
+  SidePanel,
+  VerdictBadge,
+} from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
 import type { Column } from '../components';
-import { MapCanvas, MarkerLayer, RouteLayer } from '../map';
+import { MapCanvas, MarkerLayer, MarkerPositions, RouteLayer } from '../map';
 import { buildXlsx, downloadBlob, outputFileName } from '../io';
 import { useSessionStore } from '../store/session';
 import { showInfo } from '../store/toast';
@@ -18,6 +27,7 @@ import {
   showApiError,
   withPicks,
 } from './helpers';
+import { useMapCapture } from './useMapCapture';
 
 interface ResultRow {
   no: number;
@@ -27,6 +37,14 @@ interface ResultRow {
   /** 건물(단지) 이름 — 지도 라벨·툴팁과 같은 문구 */
   building: string;
 }
+
+/**
+ * 캡처 모드에서 마커 hover·클릭을 무시할 때 넘기는 함수.
+ * `onGroupClick`을 undefined로 바꾸면 `MarkerLayer`가 마커를 통째로 다시 만들므로
+ * (clickable 여부가 바뀐다) 함수는 그대로 넘기고 하는 일만 없앤다.
+ */
+const ignoreGroupHover = () => {};
+const ignoreGroupClick = () => {};
 
 /** 두 순서열이 값까지 같은지. 내려받은 파일이 낡았는지 판단할 때 쓴다. */
 function sameOrder(a: readonly number[], b: readonly number[]): boolean {
@@ -246,6 +264,40 @@ export function ResultScreen() {
     [firstNodeOfGroup],
   );
 
+  // ── 지도 캡처 ─────────────────────────────────────────────────────────────
+  // 캡처 모드에서는 패널을 그리지 않으므로 순서 편집에 들어갈 수 없다(진입 버튼도
+  // 편집 중에는 꺼져 있다). 그래서 이 안에서 labelByGroup은 늘 finalOrder 기준이다.
+  const {
+    active: capturing,
+    enter: enterCaptureMode,
+    attachCanvas,
+    onPoints: onMarkerPoints,
+    fitPoints: captureFitPoints,
+    frame: captureFrame,
+    toolbar: captureToolbar,
+    preview: capturePreview,
+  } = useMapCapture({ groups, labelByGroup, finalOrder, fileName });
+
+  /**
+   * 캡처 모드로 들어간다. 표에서 남은 hover·선택 강조는 지운다.
+   * 스크롤 목표도 비운다 — 캡처를 마치고 패널이 다시 마운트될 때 표가 옛 행으로 튀지 않게.
+   */
+  const startCapture = useCallback(() => {
+    setHoverNodeId(null);
+    setSelectedNodeId(null);
+    setScrollTarget(null);
+    enterCaptureMode();
+  }, [enterCaptureMode]);
+
+  // 캡처 모드를 닫으면(닫기 버튼·Esc) 패널이 다시 마운트된다. 포커스가 body로 떨어지지 않게
+  // 들어갈 때 누른 `지도 캡처` 버튼으로 되돌린다.
+  const captureBtnRef = useRef<HTMLButtonElement | null>(null);
+  const wasCapturingRef = useRef(false);
+  useEffect(() => {
+    if (wasCapturingRef.current && !capturing) captureBtnRef.current?.focus();
+    wasCapturingRef.current = capturing;
+  }, [capturing]);
+
   /** 편집 중 행 이동. `to`가 범위를 벗어나면 아무 일도 하지 않는다 */
   const moveRow = useCallback((from: number, to: number) => {
     setDraft((prev) => moveItem(prev, from, to));
@@ -342,6 +394,12 @@ export function ResultScreen() {
       ? '최종 순서가 아직 없습니다'
       : '배송순서 · 연번 · 이름 · 주소 네 열을 서식과 함께 내려받습니다';
 
+  /** 지도 캡처 버튼이 왜 꺼졌는지 / 무엇을 하는지. */
+  const captureReason = editing
+    ? '순서 편집을 끝낸 뒤 캡처할 수 있습니다'
+    : finalOrder.length === 0
+      ? '최종 순서가 아직 없습니다'
+      : '오른쪽 표를 빼고 지도와 순번만 PNG 이미지로 저장합니다';
 
   const columns = useMemo<Column<ResultRow>[]>(() => {
     const base: Column<ResultRow>[] = [
@@ -417,7 +475,7 @@ export function ResultScreen() {
 
   return (
     <div className="ro-mapscreen">
-      <div className="ro-mapscreen__canvas">
+      <div className="ro-mapscreen__canvas" ref={attachCanvas}>
         <MapCanvas center={origin ?? undefined}>
           <RouteLayer paths={fullPath} style="solid" />
           <MarkerLayer
@@ -425,173 +483,198 @@ export function ResultScreen() {
             origin={origin}
             orderLabel={orderLabel}
             tooltipOf={tooltipOf}
-            highlightGroupId={hoveredRow?.groupId}
-            highlightText={hoveredRow ? `${hoveredRow.no} · ${hoveredRow.building}` : undefined}
-            onGroupHover={onMarkerHover}
-            onGroupClick={onMarkerClick}
+            // 캡처 모드에서는 hover 강조 라벨이 이미지에 찍히지 않게 끈다.
+            highlightGroupId={capturing ? undefined : hoveredRow?.groupId}
+            highlightText={
+              !capturing && hoveredRow
+                ? `${hoveredRow.no} · ${hoveredRow.building}`
+                : undefined
+            }
+            onGroupHover={capturing ? ignoreGroupHover : onMarkerHover}
+            onGroupClick={capturing ? ignoreGroupClick : onMarkerClick}
           />
           <MapPan target={panTarget} />
+          <MapFit points={captureFitPoints} />
+          {capturing ? (
+            <MarkerPositions groups={groups} onChange={onMarkerPoints} />
+          ) : null}
         </MapCanvas>
+        {captureFrame ? <CaptureFrame {...captureFrame} /> : null}
+        {capturing ? <CaptureToolbar {...captureToolbar} /> : null}
       </div>
 
-      <SidePanel
-        className="ro-s6"
-        title="배송 순서 결과"
-        note={`원본 ${rows.length}행 → 결과 ${resultRows.length}건`}
-        bodyClassName="ro-panel__scroll"
-        bodyRef={listRef}
-        footer={
-          <>
-            {/*
-              세션 삭제는 되돌릴 수 없는데 바로 위가 드래그 자동 스크롤이 도는 표 가장자리다.
-              다운로드 기록 줄을 사이에 두어 손이 미끄러져 닿는 거리를 떼어 놓는다.
-            */}
-            <div className="ro-s6__notes">
-              {lastDownload ? (
-                <div className={staleDownload ? 'ro-warn-text' : undefined}>
-                  마지막 다운로드 {lastDownload.at} · {lastDownload.name}
-                  {staleDownload ? ' — 그 뒤 순서가 바뀌었습니다. 다시 받으세요.' : ''}
-                </div>
-              ) : (
-                <div>아직 내려받지 않았습니다</div>
-              )}
-            </div>
-            <div className="ro-s6__foot">
-              <button
-                type="button"
-                className="ro-btn ro-btn--sm ro-btn--danger"
-                onClick={clearSession}
-              >
-                처음부터 (세션 삭제)
-              </button>
-            </div>
-          </>
-        }
-        extraHead={
-          <>
-            <div className="ro-s6__downloads">
-              <button
-                type="button"
-                className="ro-btn ro-btn--dl ro-btn--grow"
-                disabled={editing || finalOrder.length === 0}
-                title={downloadReason}
-                onClick={() => void downloadXlsx()}
-              >
-                <Download size={16} />
-                엑셀 (xlsx)
-                {staleDownload ? <span className="ro-btn__sub">· 변경됨</span> : null}
-              </button>
-            </div>
-            {/*
-              편집 중에는 안내 한 줄 + 버튼 줄로 쌓는다. 520px 패널에서 긴 안내와 버튼
-              셋을 한 줄에 나란히 두면 서로 밀려 줄바꿈이 생긴다.
-              "되돌리기"와 "취소"는 한국어로 거의 같게 읽히는데 동작은 정반대라
-              (계산 결과로 draft 교체 / draft 폐기 후 편집 종료) 문구를 동작대로 적고
-              줄도 나눠 두었다.
-            */}
-            <div className="ro-s6__edit">
-              {editing ? (
-                <>
-                  <span className="ro-s6__edithint">끌거나 위·아래 버튼으로 순서를 바꿉니다</span>
-                  <button type="button" className="ro-btn ro-btn--sm" onClick={revertToComputed}>
-                    계산 결과로 되돌리기
-                  </button>
-                  <div className="ro-s6__editbtns">
-                    <button type="button" className="ro-btn ro-btn--md" onClick={cancelEdit}>
-                      편집 취소
-                    </button>
-                    <button
-                      type="button"
-                      className="ro-btn ro-btn--md ro-btn--primary"
-                      onClick={applyEdit}
-                    >
-                      적용
-                    </button>
+      {capturePreview ? <CapturePreviewModal {...capturePreview} /> : null}
+
+      {capturing ? null : (
+        <SidePanel
+          className="ro-s6"
+          title="배송 순서 결과"
+          note={`원본 ${rows.length}행 → 결과 ${resultRows.length}건`}
+          bodyClassName="ro-panel__scroll"
+          bodyRef={listRef}
+          footer={
+            <>
+              {/*
+                세션 삭제는 되돌릴 수 없는데 바로 위가 드래그 자동 스크롤이 도는 표 가장자리다.
+                다운로드 기록 줄을 사이에 두어 손이 미끄러져 닿는 거리를 떼어 놓는다.
+              */}
+              <div className="ro-s6__notes">
+                {lastDownload ? (
+                  <div className={staleDownload ? 'ro-warn-text' : undefined}>
+                    마지막 다운로드 {lastDownload.at} · {lastDownload.name}
+                    {staleDownload ? ' — 그 뒤 순서가 바뀌었습니다. 다시 받으세요.' : ''}
                   </div>
-                </>
-              ) : (
+                ) : (
+                  <div>아직 내려받지 않았습니다</div>
+                )}
+              </div>
+              <div className="ro-s6__foot">
                 <button
                   type="button"
-                  className="ro-btn ro-btn--md"
-                  disabled={finalOrder.length === 0}
-                  onClick={startEdit}
+                  className="ro-btn ro-btn--sm ro-btn--danger"
+                  onClick={clearSession}
                 >
-                  순서 편집
+                  처음부터 (세션 삭제)
                 </button>
-              )}
-            </div>
-            <div className="ro-s6__notes">
-              {editing ? <div>{downloadReason}</div> : null}
-              <div>
-                클러스터 {clusters.length}개 · 도로시간 {timeStats.calls}회
-                {timeStats.fallbacks > 0 ? ` · 직선거리 추정 ${timeStats.fallbacks}칸` : ''}
               </div>
-              {timeStats.fallbacks > 0 ? (
-                <div className="ro-warn-text">
-                  · 일부 구간은 도로시간을 받지 못해 직선거리로 추정했습니다 (클러스터{' '}
-                  {timeStats.estimated.join('·')}번째)
-                </div>
-              ) : null}
-              {/* D2: 자동 모드에서만 채워지는 클러스터 "간" 행렬 — 수동 모드는 hasInter가 false다. */}
-              {timeStats.hasInter ? (
-                <div>
-                  클러스터 간 이동 도로시간 {timeStats.interCalls}회
-                  {timeStats.interFallbacks > 0
-                    ? ` · 직선거리 추정 ${timeStats.interFallbacks}칸`
-                    : ''}
-                </div>
-              ) : null}
-              {timeStats.interFallbacks > 0 ? (
-                <div className="ro-warn-text">
-                  · 클러스터 방문 순서 자체가 일부 직선거리 추정으로 정해졌습니다 (
-                  {timeStats.interFallbacks}칸)
-                </div>
-              ) : null}
-              {excluded.length > 0 ? (
-                <details>
-                  <summary className="ro-warn-text" style={{ cursor: 'pointer' }}>
-                    · 좌표를 못 찾아 결과에서 제외된 {excluded.length}건
-                  </summary>
-                  <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
-                    {excluded.map((n) => (
-                      <li key={n.id}>
-                        {n.name || '(이름 없음)'} · {n.address || '(주소 없음)'}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ) : null}
-              {unverifiedCount > 0 ? (
-                <div className="ro-warn-text">
-                  · 주소 미확인 상태로 포함된 {unverifiedCount}건
-                </div>
-              ) : null}
-              <div>지도 숫자 = 그 단지에서 가장 빠른 순번 · 오른쪽 위 작은 숫자 = 세대 수</div>
-            </div>
-          </>
-        }
-      >
-        <DataTable
-          columns={columns}
-          rows={resultRows}
-          rowKey={(r) => r.node.id}
-          reorder={editing ? { dragFrom, dropLine, onItemDragStart, onDragEnd } : null}
-          rowClassName={(r, i) =>
-            [
-              i % 2 === 1 ? 'is-odd' : null,
-              r.node.id === hoverNodeId ? 'is-hover' : null,
-              r.node.id === selectedNodeId ? 'is-selected' : null,
-            ]
-              .filter(Boolean)
-              .join(' ') || undefined
+            </>
           }
-          onRowHover={onRowHover}
-          onRowClick={onRowClick}
-          scrollTo={scrollTarget ? { key: scrollTarget.id } : null}
-          empty="아직 최종 순서가 없습니다"
-        />
-      </SidePanel>
-
+          extraHead={
+            <>
+              <div className="ro-s6__downloads">
+                <button
+                  type="button"
+                  className="ro-btn ro-btn--dl ro-btn--grow"
+                  disabled={editing || finalOrder.length === 0}
+                  title={downloadReason}
+                  onClick={() => void downloadXlsx()}
+                >
+                  <Download size={16} />
+                  엑셀 (xlsx)
+                  {staleDownload ? <span className="ro-btn__sub">· 변경됨</span> : null}
+                </button>
+                <button
+                  ref={captureBtnRef}
+                  type="button"
+                  className="ro-btn ro-btn--md"
+                  disabled={editing || finalOrder.length === 0}
+                  title={captureReason}
+                  onClick={startCapture}
+                >
+                  <Camera size={16} aria-hidden />
+                  지도 캡처
+                </button>
+              </div>
+              {/*
+                편집 중에는 안내 한 줄 + 버튼 줄로 쌓는다. 520px 패널에서 긴 안내와 버튼
+                셋을 한 줄에 나란히 두면 서로 밀려 줄바꿈이 생긴다.
+                "되돌리기"와 "취소"는 한국어로 거의 같게 읽히는데 동작은 정반대라
+                (계산 결과로 draft 교체 / draft 폐기 후 편집 종료) 문구를 동작대로 적고
+                줄도 나눠 두었다.
+              */}
+              <div className="ro-s6__edit">
+                {editing ? (
+                  <>
+                    <span className="ro-s6__edithint">끌거나 위·아래 버튼으로 순서를 바꿉니다</span>
+                    <button type="button" className="ro-btn ro-btn--sm" onClick={revertToComputed}>
+                      계산 결과로 되돌리기
+                    </button>
+                    <div className="ro-s6__editbtns">
+                      <button type="button" className="ro-btn ro-btn--md" onClick={cancelEdit}>
+                        편집 취소
+                      </button>
+                      <button
+                        type="button"
+                        className="ro-btn ro-btn--md ro-btn--primary"
+                        onClick={applyEdit}
+                      >
+                        적용
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="ro-btn ro-btn--md"
+                    disabled={finalOrder.length === 0}
+                    onClick={startEdit}
+                  >
+                    순서 편집
+                  </button>
+                )}
+              </div>
+              <div className="ro-s6__notes">
+                {editing ? <div>{downloadReason}</div> : null}
+                <div>
+                  클러스터 {clusters.length}개 · 도로시간 {timeStats.calls}회
+                  {timeStats.fallbacks > 0 ? ` · 직선거리 추정 ${timeStats.fallbacks}칸` : ''}
+                </div>
+                {timeStats.fallbacks > 0 ? (
+                  <div className="ro-warn-text">
+                    · 일부 구간은 도로시간을 받지 못해 직선거리로 추정했습니다 (클러스터{' '}
+                    {timeStats.estimated.join('·')}번째)
+                  </div>
+                ) : null}
+                {/* D2: 자동 모드에서만 채워지는 클러스터 "간" 행렬 — 수동 모드는 hasInter가 false다. */}
+                {timeStats.hasInter ? (
+                  <div>
+                    클러스터 간 이동 도로시간 {timeStats.interCalls}회
+                    {timeStats.interFallbacks > 0
+                      ? ` · 직선거리 추정 ${timeStats.interFallbacks}칸`
+                      : ''}
+                  </div>
+                ) : null}
+                {timeStats.interFallbacks > 0 ? (
+                  <div className="ro-warn-text">
+                    · 클러스터 방문 순서 자체가 일부 직선거리 추정으로 정해졌습니다 (
+                    {timeStats.interFallbacks}칸)
+                  </div>
+                ) : null}
+                {excluded.length > 0 ? (
+                  <details>
+                    <summary className="ro-warn-text" style={{ cursor: 'pointer' }}>
+                      · 좌표를 못 찾아 결과에서 제외된 {excluded.length}건
+                    </summary>
+                    <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                      {excluded.map((n) => (
+                        <li key={n.id}>
+                          {n.name || '(이름 없음)'} · {n.address || '(주소 없음)'}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+                {unverifiedCount > 0 ? (
+                  <div className="ro-warn-text">
+                    · 주소 미확인 상태로 포함된 {unverifiedCount}건
+                  </div>
+                ) : null}
+                <div>지도 숫자 = 그 단지에서 가장 빠른 순번 · 오른쪽 위 작은 숫자 = 세대 수</div>
+              </div>
+            </>
+          }
+        >
+          <DataTable
+            columns={columns}
+            rows={resultRows}
+            rowKey={(r) => r.node.id}
+            reorder={editing ? { dragFrom, dropLine, onItemDragStart, onDragEnd } : null}
+            rowClassName={(r, i) =>
+              [
+                i % 2 === 1 ? 'is-odd' : null,
+                r.node.id === hoverNodeId ? 'is-hover' : null,
+                r.node.id === selectedNodeId ? 'is-selected' : null,
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
+            onRowHover={onRowHover}
+            onRowClick={onRowClick}
+            scrollTo={scrollTarget ? { key: scrollTarget.id } : null}
+            empty="아직 최종 순서가 없습니다"
+          />
+        </SidePanel>
+      )}
     </div>
   );
 }
