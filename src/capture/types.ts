@@ -52,3 +52,23 @@ export interface TabCapture {
   /** 스트림을 끝낸다(트랙 stop). 여러 번 불러도 안전하다 */
   stop: () => void;
 }
+
+/** A4 프레임 방향. */
+export type Orientation = 'portrait' | 'landscape';
+
+/**
+ * `planNextWindow` 결과.
+ * `dx`/`dy`는 지도를 `map.panBy(dx, dy)`로 옮길 양(px)이다. 옮긴 뒤에는 고른 창이
+ * 프레임과 정확히 겹친다. `groupIds`는 그 창에 온전히 들어오는 "남은" 그룹이다.
+ */
+export interface WindowPlan {
+  dx: number;
+  dy: number;
+  groupIds: number[];
+}
+
+/** 자동 저장 진행 상황. */
+export interface AutoProgress {
+  done: number;
+  total: number;
+}

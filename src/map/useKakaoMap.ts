@@ -30,7 +30,19 @@ export interface UseKakaoMapResult {
    * 창 크기 변경은 SDK가 스스로 처리하므로, 레이아웃 변화로 컨테이너만 바뀐 경우에만 부른다.
    */
   relayout: () => void;
+  /** 지도를 화면 px만큼 옮긴다(`map.panBy(dx, dy)`). 양수 dx는 지도를 왼쪽으로 밀어 오른쪽을 보여 준다 */
+  panBy: (dx: number, dy: number) => void;
+  /**
+   * 부른 뒤 지도가 멈추고(`idle`) 타일까지 받으면(`tilesloaded`, 순서 무관) 끝나는 Promise.
+   * `idle` 뒤 `tilesloaded`가 잠깐(약 0.6초) 안에 오지 않으면(이미 받은 타일 등) 그때 끝나고,
+   * 이벤트가 `timeoutMs` 안에 오지 않으면(움직임이 없어 이벤트가 안 오는 경우 등) 그때 끝난다.
+   * 지도가 없으면 바로 끝난다. 실패(reject)하지 않는다.
+   */
+  whenIdle: (timeoutMs: number) => Promise<void>;
 }
+
+/** `whenIdle`: `idle` 뒤 `tilesloaded`를 더 기다리는 최대 시간(ms) */
+const TILE_GRACE_MS = 600;
 
 const SDK_MISSING =
   '카카오맵 SDK를 불러오지 못했습니다. JavaScript 키 설정(.env.local의 VITE_KAKAO_JS_KEY)을 확인하세요.';
@@ -95,5 +107,41 @@ export function useKakaoMap(
     mapRef.current?.relayout();
   }, []);
 
-  return { map, error, fitBounds, relayout };
+  const panBy = useCallback((dx: number, dy: number) => {
+    mapRef.current?.panBy(dx, dy);
+  }, []);
+
+  const whenIdle = useCallback((timeoutMs: number) => {
+    const m = mapRef.current;
+    if (!m) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let sawIdle = false;
+      let sawTiles = false;
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      const done = () => {
+        clearTimeout(timer);
+        clearTimeout(grace);
+        kakao.maps.event.removeListener(m, 'idle', onIdle);
+        kakao.maps.event.removeListener(m, 'tilesloaded', onTiles);
+        resolve();
+      };
+      // `idle`은 이동이 끝나면 오지만 타일은 아직 받는 중일 수 있다. 멀리 옮겨 새 타일을 받는 경우
+      // `tilesloaded`가 뒤따르므로 조금 더 기다린다. 이미 받아 둔 타일이면 `tilesloaded`가 오지
+      // 않을 수 있어 `idle` 뒤 TILE_GRACE_MS가 지나면 끝낸다.
+      const onIdle = () => {
+        sawIdle = true;
+        if (sawTiles) done();
+        else if (grace === undefined) grace = setTimeout(done, TILE_GRACE_MS);
+      };
+      const onTiles = () => {
+        sawTiles = true;
+        if (sawIdle) done();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      kakao.maps.event.addListener(m, 'idle', onIdle);
+      kakao.maps.event.addListener(m, 'tilesloaded', onTiles);
+    });
+  }, []);
+
+  return { map, error, fitBounds, relayout, panBy, whenIdle };
 }

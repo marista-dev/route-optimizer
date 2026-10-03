@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  A4_RATIO,
   KAKAO_LOGO_ZONE,
   MARKER_RADIUS_PX,
-  clampRect,
   classifyPoint,
   classifyPoints,
   cropToVideo,
+  fitA4Frame,
   formatOrderRanges,
   includesKakaoLogo,
-  normalizeRect,
+  nextAnchor,
+  planNextWindow,
+  planPages,
+  roundPan,
 } from './geometry';
+import type { MarkerPoint, Rect } from './types';
 
 describe('cropToVideo', () => {
   it('가로·세로 비율을 따로 적용한다', () => {
@@ -120,48 +125,6 @@ describe('formatOrderRanges', () => {
   });
 });
 
-describe('normalizeRect', () => {
-  it('어느 방향으로 끌어도 양수 크기', () => {
-    expect(normalizeRect({ x: 50, y: 80 }, { x: 10, y: 20 })).toEqual({
-      x: 10,
-      y: 20,
-      width: 40,
-      height: 60,
-    });
-  });
-});
-
-describe('clampRect', () => {
-  const bounds = { width: 500, height: 400 };
-
-  it('밖으로 나간 사각형을 크기는 두고 안으로 민다', () => {
-    expect(clampRect({ x: 450, y: -10, width: 100, height: 100 }, bounds, 40)).toEqual({
-      x: 400,
-      y: 0,
-      width: 100,
-      height: 100,
-    });
-  });
-
-  it('최소 크기를 지킨다', () => {
-    expect(clampRect({ x: 10, y: 10, width: 5, height: 5 }, bounds, 40)).toEqual({
-      x: 10,
-      y: 10,
-      width: 40,
-      height: 40,
-    });
-  });
-
-  it('bounds보다 크면 bounds에 맞춘다', () => {
-    expect(clampRect({ x: -100, y: -100, width: 900, height: 900 }, bounds, 40)).toEqual({
-      x: 0,
-      y: 0,
-      width: 500,
-      height: 400,
-    });
-  });
-});
-
 describe('includesKakaoLogo', () => {
   const container = { width: 1000, height: 700 };
 
@@ -183,5 +146,276 @@ describe('includesKakaoLogo', () => {
     expect(includesKakaoLogo({ x: 10, y: 0, width: 990, height: 700 }, container)).toBe(false);
     expect(includesKakaoLogo({ x: 0, y: 0, width: 1000, height: 690 }, container)).toBe(false);
     expect(includesKakaoLogo({ x: 0, y: 0, width: 60, height: 700 }, container)).toBe(false);
+  });
+});
+
+describe('fitA4Frame', () => {
+  it('세로: 높이 = 너비 × √2, 여백·하단 예약을 뺀 영역 가운데', () => {
+    // 쓸 수 있는 영역: 1000-48 = 952 × 800-48-80 = 672
+    const r = fitA4Frame({ width: 1000, height: 800 }, 'portrait', 80, 24);
+    expect(r.height).toBe(672);
+    expect(r.width).toBe(Math.floor(672 / A4_RATIO));
+    expect(r.x).toBe(Math.round(24 + (952 - r.width) / 2));
+    expect(r.y).toBe(24);
+    expect(r.y + r.height).toBeLessThanOrEqual(800 - 80 - 24);
+  });
+
+  it('가로: 너비 = 높이 × √2, 높이가 먼저 꽉 찬다', () => {
+    const r = fitA4Frame({ width: 1600, height: 800 }, 'landscape', 80, 24);
+    expect(r.height).toBe(672);
+    expect(r.width).toBe(Math.floor(672 * A4_RATIO));
+    expect(r.x).toBe(Math.round(24 + (1552 - r.width) / 2));
+  });
+
+  it('가로: 폭이 좁으면 너비가 먼저 꽉 차고 세로 가운데', () => {
+    const r = fitA4Frame({ width: 548, height: 1000 }, 'landscape', 0, 24);
+    expect(r.width).toBe(500);
+    expect(r.height).toBe(Math.floor(500 / A4_RATIO));
+    expect(r.y).toBe(Math.round(24 + (952 - r.height) / 2));
+  });
+
+  it('너무 작거나 0인 컨테이너도 NaN 없이 최소 1px', () => {
+    for (const c of [
+      { width: 0, height: 0 },
+      { width: 10, height: 10 },
+      { width: -5, height: Number.NaN },
+    ]) {
+      const r = fitA4Frame(c, 'portrait', 80, 24);
+      expect(r.width).toBeGreaterThanOrEqual(1);
+      expect(r.height).toBeGreaterThanOrEqual(1);
+      for (const v of Object.values(r)) expect(Number.isFinite(v)).toBe(true);
+    }
+  });
+});
+
+const R = 19;
+const FRAME: Rect = { x: 100, y: 50, width: 400, height: 560 };
+
+/** 창(프레임 크기)에 온전히 들어가는지. */
+function insideFrame(p: { x: number; y: number }, frame: Rect): boolean {
+  return classifyPoint(p, frame, R) === 'inside';
+}
+
+/** plan대로 panBy한 뒤의 화면 좌표. */
+function shift(points: readonly MarkerPoint[], dx: number, dy: number): MarkerPoint[] {
+  return points.map((p) => ({ groupId: p.groupId, x: p.x - dx, y: p.y - dy }));
+}
+
+/** 결정적 의사 난수. */
+function rng(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+describe('nextAnchor', () => {
+  it('순번이 가장 빠른 그룹, 순번 없는 그룹은 맨 뒤', () => {
+    const order = new Map([
+      [10, 5],
+      [11, 2],
+      [12, 9],
+    ]);
+    expect(nextAnchor(new Set([10, 11, 12, 99]), (id) => order.get(id))).toBe(11);
+    expect(nextAnchor(new Set([99, 12]), (id) => order.get(id))).toBe(12);
+    expect(nextAnchor(new Set([99, 98]), (id) => order.get(id))).toBe(98);
+    expect(nextAnchor(new Set(), (id) => order.get(id))).toBeUndefined();
+  });
+});
+
+describe('planNextWindow', () => {
+  it('anchor가 없으면 null', () => {
+    const pts: MarkerPoint[] = [{ groupId: 1, x: 200, y: 200 }];
+    expect(planNextWindow(pts, new Set([1]), 7, FRAME, R)).toBeNull();
+  });
+
+  it('고립된 마커 하나: 안에 들어오게 옮기고 이동은 최소', () => {
+    const pts: MarkerPoint[] = [{ groupId: 1, x: 2000, y: -300 }];
+    const plan = planNextWindow(pts, new Set([1]), 1, FRAME, R)!;
+    expect(plan.groupIds).toEqual([1]);
+    const after = shift(pts, plan.dx, plan.dy);
+    expect(insideFrame(after[0], FRAME)).toBe(true);
+    // 최소 이동이면 마커는 프레임 오른쪽 위 가장자리에 딱 붙는다.
+    expect(after[0].x).toBeCloseTo(FRAME.x + FRAME.width - R);
+    expect(after[0].y).toBeCloseTo(FRAME.y + R);
+  });
+
+  it('이미 프레임 안에 다 있으면 움직이지 않는다', () => {
+    const pts: MarkerPoint[] = [
+      { groupId: 1, x: 200, y: 200 },
+      { groupId: 2, x: 300, y: 400 },
+    ];
+    const plan = planNextWindow(pts, new Set([1, 2]), 1, FRAME, R)!;
+    expect(plan.dx).toBe(0);
+    expect(plan.dy).toBe(0);
+    expect(plan.groupIds.sort()).toEqual([1, 2]);
+  });
+
+  it('anchor를 지키면서 남은 마커가 많은 쪽으로 간다', () => {
+    // anchor는 왼쪽, 왼쪽 바깥에 2개, 오른쪽(프레임 너비 안쪽 거리)에 5개
+    const pts: MarkerPoint[] = [
+      { groupId: 1, x: 1000, y: 300 },
+      { groupId: 2, x: 700, y: 300 },
+      { groupId: 3, x: 720, y: 320 },
+      ...[4, 5, 6, 7, 8].map((id, i) => ({ groupId: id, x: 1300 + i * 10, y: 300 + i * 20 })),
+    ];
+    const plan = planNextWindow(pts, new Set(pts.map((p) => p.groupId)), 1, FRAME, R)!;
+    expect(plan.groupIds.sort()).toEqual([1, 4, 5, 6, 7, 8]);
+    const after = shift(pts, plan.dx, plan.dy);
+    for (const p of after) {
+      expect(insideFrame(p, FRAME)).toBe(plan.groupIds.includes(p.groupId));
+    }
+  });
+
+  it('찍은(남지 않은) 마커는 세지 않는다', () => {
+    const pts: MarkerPoint[] = [
+      { groupId: 1, x: 1000, y: 300 },
+      { groupId: 2, x: 700, y: 300 },
+      { groupId: 3, x: 720, y: 320 },
+      { groupId: 4, x: 1300, y: 300 },
+    ];
+    const plan = planNextWindow(pts, new Set([1, 4]), 1, FRAME, R)!;
+    expect(plan.groupIds.sort()).toEqual([1, 4]);
+  });
+
+  it('마커가 프레임보다 크면 anchor를 가운데 둔다', () => {
+    const pts: MarkerPoint[] = [{ groupId: 1, x: 50, y: 60 }];
+    const tiny: Rect = { x: 10, y: 10, width: 20, height: 20 };
+    const plan = planNextWindow(pts, new Set([1]), 1, tiny, R)!;
+    expect(plan).toEqual({ dx: 50 - 10 - 10, dy: 60 - 10 - 10, groupIds: [1] });
+  });
+
+  it('마커 500개도 금방 끝난다', () => {
+    const rand = rng(42);
+    const pts: MarkerPoint[] = Array.from({ length: 500 }, (_, i) => ({
+      groupId: i + 1,
+      x: rand() * 3000 - 1000,
+      y: rand() * 3000 - 1000,
+    }));
+    const t0 = performance.now();
+    const plan = planNextWindow(pts, new Set(pts.map((p) => p.groupId)), 1, FRAME, R);
+    expect(plan).not.toBeNull();
+    // 넉넉한 상한(CI 편차 고려). 실제로는 수십 ms.
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
+});
+
+describe('planPages', () => {
+  /** 계획을 순서대로 적용하며 각 장에 실제로 들어가는지 확인하고, 찍힌 id를 모은다. */
+  function replay(pts: readonly MarkerPoint[], pages: ReturnType<typeof planPages>) {
+    let cur = [...pts];
+    const covered = new Set<number>();
+    for (const page of pages) {
+      cur = shift(cur, page.dx, page.dy);
+      for (const id of page.groupIds) {
+        const p = cur.find((q) => q.groupId === id)!;
+        expect(insideFrame(p, FRAME)).toBe(true);
+        expect(covered.has(id)).toBe(false);
+        covered.add(id);
+      }
+    }
+    return covered;
+  }
+
+  it('모든 마커가 한 프레임에 들어가면 1장', () => {
+    const pts: MarkerPoint[] = [
+      { groupId: 1, x: 900, y: 900 },
+      { groupId: 2, x: 1000, y: 1100 },
+      { groupId: 3, x: 1200, y: 1300 },
+    ];
+    const pages = planPages(pts, new Set([1, 2, 3]), (id) => id, FRAME, R);
+    expect(pages).toHaveLength(1);
+    expect(pages[0].groupIds.sort()).toEqual([1, 2, 3]);
+  });
+
+  it('1~20·100~120이 한 곳, 21~99가 다른 곳에 있으면 첫 장 뒤 21로 넘어간다', () => {
+    const rand = rng(7);
+    const pts: MarkerPoint[] = [];
+    // 묶음 A: 프레임 안 (150~450, 100~560)
+    for (let o = 1; o <= 20; o++) pts.push({ groupId: o, x: 150 + rand() * 300, y: 100 + rand() * 460 });
+    for (let o = 100; o <= 120; o++) pts.push({ groupId: o, x: 150 + rand() * 300, y: 100 + rand() * 460 });
+    // 묶음 B: 오른쪽 멀리 (3000~3300, 200~600)
+    for (let o = 21; o <= 99; o++) pts.push({ groupId: o, x: 3000 + rand() * 300, y: 200 + rand() * 400 });
+
+    const all = new Set(pts.map((p) => p.groupId));
+    const first = planNextWindow(pts, all, 1, FRAME, R)!;
+    const firstIds = new Set(first.groupIds);
+    for (let o = 1; o <= 20; o++) expect(firstIds.has(o)).toBe(true);
+    for (let o = 100; o <= 120; o++) expect(firstIds.has(o)).toBe(true);
+    expect(firstIds.has(21)).toBe(false);
+
+    const left = new Set([...all].filter((id) => !firstIds.has(id)));
+    expect(nextAnchor(left, (id) => id)).toBe(21);
+
+    const moved = shift(pts, first.dx, first.dy);
+    const second = planNextWindow(moved, left, 21, FRAME, R)!;
+    expect(second.dx).toBeGreaterThan(2000); // 묶음 B 쪽(오른쪽)으로
+    expect(second.groupIds).toContain(21);
+    expect(second.groupIds.every((id) => id >= 21 && id <= 99)).toBe(true);
+
+    const pages = planPages(pts, all, (id) => id, FRAME, R);
+    expect(pages[0].groupIds.sort((a, b) => a - b)).toEqual(
+      first.groupIds.sort((a, b) => a - b),
+    );
+    expect(pages[1].groupIds).toContain(21);
+    expect(replay(pts, pages)).toEqual(all);
+  });
+
+  it('dx/dy는 앞 장 기준 누적 이동이고, 결국 남은 마커를 모두 덮는다', () => {
+    const rand = rng(123);
+    const pts: MarkerPoint[] = Array.from({ length: 150 }, (_, i) => ({
+      groupId: i + 1,
+      x: rand() * 4000 - 1500,
+      y: rand() * 4000 - 1500,
+    }));
+    const remaining = new Set(pts.filter((p) => p.groupId % 5 !== 0).map((p) => p.groupId));
+    const pages = planPages(pts, remaining, (id) => id, FRAME, R);
+    expect(pages.length).toBeGreaterThan(1);
+    expect(replay(pts, pages)).toEqual(remaining);
+  });
+
+  it('좌표 없는 그룹은 건너뛰고, maxPages에서 멈춘다', () => {
+    const pts: MarkerPoint[] = [
+      { groupId: 1, x: 0, y: 0 },
+      { groupId: 2, x: 5000, y: 0 },
+      { groupId: 3, x: 10000, y: 0 },
+    ];
+    expect(planPages(pts, new Set([1, 2, 3, 99]), (id) => id, FRAME, R)).toHaveLength(3);
+    expect(planPages(pts, new Set([1, 2, 3]), (id) => id, FRAME, R, 2)).toHaveLength(2);
+  });
+});
+
+describe('roundPan', () => {
+  const frame: Rect = { x: 100, y: 100, width: 200, height: 300 };
+
+  it('정수 값은 그대로 둔다', () => {
+    expect(roundPan([], { dx: 12, dy: -7, groupIds: [] }, frame, 10)).toEqual({ dx: 12, dy: -7 });
+  });
+
+  it('정수로는 둘 다 담을 수 없어도 하나는 온전히 담는다', () => {
+    // r=10. 마커1은 dx ≥ 0.5, 마커2는 dx ≤ 0.5여야 온전히 들어간다 → 정수 해는 없다.
+    const points: MarkerPoint[] = [
+      { groupId: 1, x: 290.5, y: 200 },
+      { groupId: 2, x: 110.5, y: 200 },
+    ];
+    const r = roundPan(points, { dx: 0.5, dy: 0, groupIds: [1, 2] }, frame, 10);
+    const placed = classifyPoints(
+      points.map((p) => ({ ...p, x: p.x - r.dx, y: p.y - r.dy })),
+      frame,
+      10,
+    );
+    expect([...placed.values()].filter((v) => v === 'inside')).toHaveLength(1);
+    expect(Number.isInteger(r.dx)).toBe(true);
+  });
+
+  it('그냥 반올림하면 걸치는 경우 담기는 쪽을 고른다', () => {
+    // 위쪽 경계(100)에 r=10 원이 붙으려면 y − dy ≥ 110 → dy ≤ −0.5.
+    // Math.round(−0.5)는 0이라 109.5에서 걸친다. 내림(−1)을 골라야 한다.
+    const points: MarkerPoint[] = [{ groupId: 1, x: 200, y: 109.5 }];
+    expect(roundPan(points, { dx: 0, dy: -0.5, groupIds: [1] }, frame, 10)).toEqual({
+      dx: 0,
+      dy: -1,
+    });
   });
 });

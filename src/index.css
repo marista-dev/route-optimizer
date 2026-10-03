@@ -125,6 +125,45 @@ input::placeholder {
   z-index: 20;
 }
 
+/*
+ * S6 캡처 모드(`html.ro-capture-mode`)에서는 헤더를 위로 접어 지도가 화면 전체를 쓰게 한다.
+ * `position: fixed`로 흐름에서 빼므로 `.ro-main`이 뷰포트 높이를 다 채운다(지도 컨테이너
+ * 크기가 바뀌므로 화면 쪽은 클래스를 붙이고 뗀 뒤 `relayout`을 부른다).
+ * 아래 6px만 남겨 마우스를 올리거나 Tab으로 들어오면 내려온다.
+ * 실제 캡처 순간(`html.ro-capturing`)에는 그 6px도 숨긴다.
+ */
+.ro-capture-mode .ro-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  transform: translateY(calc(-100% + 6px));
+  transition: transform 160ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+/*
+ * 키보드 포커스(:focus-visible)일 때만 열어 둔다. `:focus-within`이면 마우스로 헤더 버튼을
+ * 누른 뒤(예: 세션 삭제 → 취소) 포커스가 남아 헤더가 내려온 채로 지도를 가린다.
+ */
+.ro-capture-mode .ro-header:hover,
+.ro-capture-mode .ro-header:has(:focus-visible) {
+  transform: translateY(0);
+  /* 브라우저 탭으로 가던 마우스가 스치기만 해도 내려오지 않게 아주 잠깐 기다린다. */
+  transition-delay: 80ms;
+}
+.ro-capture-mode .ro-header:not(:hover):not(:has(:focus-visible)) {
+  /* 지나가던 마우스에 바로 접히지 않게 살짝 늦게 올라간다. */
+  transition-delay: 250ms;
+}
+.ro-capturing .ro-header {
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ro-capture-mode .ro-header {
+    transition: none;
+  }
+}
+
 .ro-brand {
   display: flex;
   align-items: center;
@@ -459,6 +498,82 @@ input::placeholder {
   flex-direction: column;
   gap: 8px;
   flex: none;
+}
+
+/*
+ * 접을 수 있는 패널(`SidePanel`에 `onToggleCollapsed`를 준 경우, S6).
+ * 펼쳐 있을 때 감싸개(.ro-panel__reveal)는 `display: contents`라 배치가 보통 패널과 같다.
+ * 접히면 감싸개가 `hidden`(display: none)이 되어 제목 줄과 요약만 남고, 패널 높이도 내용만큼 줄어든다.
+ */
+.ro-panel__reveal:not([hidden]) {
+  display: contents;
+}
+.ro-panel--collapsible .ro-panel__reveal > * {
+  animation: ro-panel-reveal 180ms ease;
+}
+@keyframes ro-panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.ro-panel--collapsible .ro-panel__titlerow {
+  align-items: center;
+}
+.ro-panel--collapsible .ro-panel__title {
+  margin-right: auto;
+}
+.ro-panel__toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  margin: -4px -6px -4px 0;
+  padding: 0 4px 0 8px;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ro-panel__toggle[aria-disabled='true'] {
+  color: var(--border-strong);
+  cursor: not-allowed;
+}
+.ro-panel__toggle:not([aria-disabled='true']):hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.ro-panel__toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+/* 펼쳐 있으면 위(접기), 접혀 있으면 아래(펼치기)를 가리킨다. */
+.ro-panel__toggle svg {
+  transform: rotate(180deg);
+  transition: transform 180ms ease;
+}
+.ro-panel.is-collapsed .ro-panel__toggle svg {
+  transform: none;
+}
+.ro-panel.is-collapsed .ro-panel__head {
+  border-bottom: 0;
+  padding-bottom: 14px;
+}
+.ro-panel__summary {
+  font-size: 13px;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ro-panel--collapsible .ro-panel__reveal > *,
+  .ro-panel__toggle svg {
+    animation: none;
+    transition: none;
+  }
 }
 .ro-row {
   display: flex;
@@ -1139,33 +1254,80 @@ input::placeholder {
 }
 
 /*
- * S6 지도 캡처 — 프레임·툴바는 카카오 오버레이가 아니라 지도 컨테이너 위의 DOM이다.
+ * S6 지도 캡처 — 프레임·독은 카카오 오버레이가 아니라 지도 컨테이너 위의 DOM이다.
  * 쌓임 순서: 지도(.ro-map__canvas, isolation으로 내부 zIndex를 가둔다) < 프레임(12)
- * < 툴바(14) < 모달(50) < 토스트(60). 캡처 모드에서는 패널(10)을 렌더하지 않는다.
+ * < 독(14) < 헤더(20) < 모달(50) < 토스트(60). 캡처 모드에서는 패널(10)을 렌더하지 않는다.
  * 실제 캡처 직전에는 `.is-hidden`(visibility)으로 장식을 모두 숨긴다.
+ * 지도를 끄는 동안에는 `.is-faded`로 라벨·링·배지·독을 흐린다(어두운 처리·테두리는 그대로).
  */
+:root {
+  /* 하단 독 높이. 화면 쪽은 프레임을 계산할 때 이만큼(+ 여백) 아래를 비운다. */
+  --capture-dock-h: 56px;
+  /* 독이 지도 아래끝에서 떨어진 거리 */
+  --capture-dock-gap: 12px;
+}
 .ro-capture {
   position: absolute;
   inset: 0;
   z-index: 12;
-  /* 핸들·손잡이 말고는 지도가 그대로 끌리고 확대돼야 한다. */
+  /* 프레임은 고정이고 사용자는 아래의 지도를 끌고 확대한다. */
   pointer-events: none;
   overflow: hidden;
 }
+/*
+ * 캡처 모드에서는 토스트를 위로 올린다. 아래 가운데 그대로면 하단 독(버튼)을 6초 동안 가린다.
+ * 캡처 순간에는 아래 규칙으로 숨으므로 이미지에 찍히지 않는다.
+ */
+.ro-capture-mode .ro-toast {
+  top: 16px;
+  bottom: auto;
+}
 .ro-capture.is-hidden,
-.ro-capture-toolbar.is-hidden,
+.ro-capture-dock.is-hidden,
 .ro-capturing .ro-toast {
   visibility: hidden;
 }
+/* 프레임 바깥 어둡게: 프레임 자리에 놓은 투명 상자의 큰 그림자. 컨테이너가 잘라 준다. */
 .ro-capture-mask {
   position: absolute;
-  background: rgba(22, 26, 34, 0.42);
+  box-shadow: 0 0 0 100vmax rgba(22, 26, 34, 0.42);
   pointer-events: none;
 }
 .ro-capture-frame {
   position: absolute;
   border: 2px solid var(--primary);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+/* 라벨·링·배지: 지도 조작 중에는 흐리게. */
+.ro-capture-deco {
+  transition: opacity 150ms ease;
+}
+.ro-capture.is-faded .ro-capture-deco {
+  opacity: 0.25;
+}
+/* 프레임 왼쪽 위 바깥에 붙는 칩. tooltip(title)이 떠야 하므로 이것만 포인터를 받는다. */
+.ro-capture-label {
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 4px);
+  max-width: calc(100% + 4px);
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  cursor: default;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.ro-capture.is-faded .ro-capture-label {
   pointer-events: none;
 }
 /* 걸쳐 잘리는 마커 표시. 흰 바깥선으로 지도·마커 어느 색 위에서도 보이게 한다. */
@@ -1176,195 +1338,133 @@ input::placeholder {
   box-shadow: 0 0 0 2px #fff;
   pointer-events: none;
 }
-
-/* 이동 손잡이: 프레임 안쪽 위 가운데. 영역이 지도 위끝에 붙어도 잘리지 않게 안쪽에 둔다. */
-.ro-capture-grip {
+/* 이미 저장한 장에 들어간 마커의 ✓ 배지 */
+.ro-capture-badge {
   position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  height: 28px;
-  padding: 0 10px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--primary);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--success);
   color: #fff;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: move;
-  touch-action: none;
-  pointer-events: auto;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-}
-.ro-capture-grip:hover {
-  background: var(--primary-hover);
-}
-.ro-capture-grip:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--primary);
-}
-
-/*
- * 크기 조절 핸들. 누르는 자리는 24px 이상(WCAG 2.2 2.5.8), 보이는 사각형은 10px.
- * 변 핸들은 변 전체를 잡을 수 있게 길게 두고, 가운데에만 사각형을 그린다.
- */
-.ro-capture-handle {
-  position: absolute;
-  width: 24px;
-  height: 24px;
-  pointer-events: auto;
-  touch-action: none;
-}
-.ro-capture-handle::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 10px;
-  height: 10px;
-  transform: translate(-50%, -50%);
-  background: #fff;
-  border: 2px solid var(--primary);
-  border-radius: 2px;
-}
-.ro-capture-handle--n,
-.ro-capture-handle--s {
-  left: 12px;
-  right: 12px;
-  width: auto;
-  cursor: ns-resize;
-}
-.ro-capture-handle--e,
-.ro-capture-handle--w {
-  top: 12px;
-  bottom: 12px;
-  height: auto;
-  cursor: ew-resize;
-}
-.ro-capture-handle--n {
-  top: -12px;
-}
-.ro-capture-handle--s {
-  bottom: -12px;
-}
-.ro-capture-handle--e {
-  right: -12px;
-}
-.ro-capture-handle--w {
-  left: -12px;
-}
-.ro-capture-handle--nw {
-  top: -12px;
-  left: -12px;
-  cursor: nwse-resize;
-}
-.ro-capture-handle--ne {
-  top: -12px;
-  right: -12px;
-  cursor: nesw-resize;
-}
-.ro-capture-handle--se {
-  bottom: -12px;
-  right: -12px;
-  cursor: nwse-resize;
-}
-.ro-capture-handle--sw {
-  bottom: -12px;
-  left: -12px;
-  cursor: nesw-resize;
-}
-.ro-capture-size {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(22, 26, 34, 0.78);
-  color: #fff;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  box-shadow: 0 0 0 1.5px #fff;
   pointer-events: none;
 }
 
-/* 캡처 툴바: 지도 위 가운데. 좁은 화면에서는 상태 문구가 다음 줄로 내려간다. */
-.ro-capture-toolbar {
+/* 하단 독: 지도 아래 가운데 한 줄. 좁은 화면에서는 두 줄까지 내려간다. */
+.ro-capture-dock {
   position: absolute;
-  top: 16px;
   left: 50%;
+  bottom: var(--capture-dock-gap);
   transform: translateX(-50%);
   z-index: 14;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  justify-content: center;
+  gap: 8px 10px;
   width: max-content;
-  max-width: calc(100% - 32px);
-  padding: 8px 8px 8px 10px;
+  max-width: calc(100% - 24px);
+  min-height: var(--capture-dock-h);
+  padding: 0 8px;
   background: var(--surface);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-panel);
+  transition: opacity 150ms ease;
 }
-.ro-capture-toolbar__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.ro-capture-dock.is-faded {
+  opacity: 0.15;
+  pointer-events: none;
 }
-.ro-capture-toolbar__status {
+.ro-capture-dock__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 6px;
+  gap: 6px;
   min-width: 0;
-  font-size: 14px;
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
 }
-.ro-capture-toolbar__sep {
-  color: var(--faint);
-}
-.ro-capture-toolbar__done {
-  color: var(--success-fg);
-  font-weight: 500;
-}
-.ro-capture-toolbar__count {
-  padding: 1px 8px;
-  border-radius: 999px;
+.ro-capture-seg {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: var(--radius);
   background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.ro-capture-seg__btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   color: var(--muted);
-  font-size: 13px;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
 }
-.ro-capture-toolbar__close {
+.ro-capture-seg__btn.is-on {
+  background: var(--surface);
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.ro-capture-seg__btn:disabled {
+  cursor: not-allowed;
+}
+.ro-capture-seg__btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.ro-capture-dock__count {
+  flex: none;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ro-capture-dock__count.is-done {
+  background: var(--success-bg);
+  color: var(--success-fg);
+}
+.ro-capture-dock__progress {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ro-capture-dock__close {
   padding: 0 8px;
-  margin-left: auto;
 }
-.ro-capture-toolbar__hint {
-  flex-basis: 100%;
+/* 미지원 브라우저 안내. 독 높이를 지키도록 한 줄로 두고 넘치면 말줄임(전체는 title). */
+.ro-capture-dock__hint {
   margin: 0;
-  padding: 6px 8px;
+  max-width: 420px;
+  min-width: 0;
+  padding: 4px 8px;
   border-radius: var(--radius);
   background: var(--warn-bg);
   color: var(--warn);
   font-size: 13px;
-  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 @media (max-width: 720px) {
-  .ro-capture-toolbar {
-    top: 8px;
+  .ro-capture-dock {
     max-width: calc(100% - 16px);
+    padding: 6px 8px;
   }
-  .ro-capture-toolbar__status {
-    order: 3;
-    flex-basis: 100%;
+  .ro-capture-dock__hint {
+    white-space: normal;
+    max-width: none;
   }
-  .ro-capture-toolbar__hint {
-    order: 4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ro-capture-deco,
+  .ro-capture-dock {
+    transition: none;
   }
 }
 
@@ -1654,6 +1754,12 @@ input::placeholder {
   width: 520px;
   max-width: calc(100% - 32px);
   max-height: none;
+}
+/* 접히면 제목 줄 높이·내용 너비만큼만 차지한다(지도를 가리지 않게). 오른쪽에 붙어 있어 접기 버튼 자리는 그대로다. */
+.ro-s6.is-collapsed {
+  bottom: auto;
+  width: auto;
+  max-width: min(520px, calc(100% - 32px));
 }
 .ro-s6__downloads {
   display: flex;

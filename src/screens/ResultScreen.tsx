@@ -6,14 +6,20 @@ import {
   CapturePreviewModal,
   CaptureToolbar,
   DataTable,
-  MapFit,
   MapPan,
   SidePanel,
   VerdictBadge,
 } from '../components';
 import { useDragReorder } from '../hooks/useDragReorder';
 import type { Column } from '../components';
-import { MapCanvas, MarkerLayer, MarkerPositions, RouteLayer } from '../map';
+import {
+  MapBridge,
+  MapCanvas,
+  MapInteraction,
+  MarkerLayer,
+  MarkerPositions,
+  RouteLayer,
+} from '../map';
 import { buildXlsx, downloadBlob, outputFileName } from '../io';
 import { useSessionStore } from '../store/session';
 import { showInfo } from '../store/toast';
@@ -45,6 +51,18 @@ interface ResultRow {
  */
 const ignoreGroupHover = () => {};
 const ignoreGroupClick = () => {};
+
+/** 결과 패널 접힘 상태를 기억하는 localStorage 키 */
+const PANEL_COLLAPSED_KEY = 'ro-s6-panel-collapsed';
+
+/** 저장된 접힘 상태. 저장소를 못 쓰면(사생활 보호 모드 등) 펼친 상태로 시작한다 */
+function readPanelCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(PANEL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 /** 두 순서열이 값까지 같은지. 내려받은 파일이 낡았는지 판단할 때 쓴다. */
 function sameOrder(a: readonly number[], b: readonly number[]): boolean {
@@ -86,6 +104,19 @@ export function ResultScreen() {
     { name: string; at: string; order: number[] } | null
   >(null);
   const staleDownload = lastDownload !== null && !sameOrder(lastDownload.order, finalOrder);
+
+  // ── 패널 접기 ──────────────────────────────────────────────────────────────
+  // 지도를 넓게 보려고 접어 둔 상태는 다음 방문에도 이어진다. 순서 편집 중에는 편집 UI가
+  // 숨지 않도록 늘 펼쳐 보이고 접기 버튼을 잠근다(편집 진입 버튼은 펼친 패널에만 있다).
+  const [panelCollapsed, setPanelCollapsed] = useState(readPanelCollapsed);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PANEL_COLLAPSED_KEY, panelCollapsed ? '1' : '0');
+    } catch {
+      // 저장하지 못해도 이번 방문 동안은 상태가 유지된다.
+    }
+  }, [panelCollapsed]);
+  const togglePanel = useCallback(() => setPanelCollapsed((v) => !v), []);
 
   // ── 표 ↔ 지도 연동 ────────────────────────────────────────────────────────
   const [hoverNodeId, setHoverNodeId] = useState<number | null>(null);
@@ -272,11 +303,12 @@ export function ResultScreen() {
     enter: enterCaptureMode,
     attachCanvas,
     onPoints: onMarkerPoints,
-    fitPoints: captureFitPoints,
+    onMapContext,
+    interaction: captureInteraction,
     frame: captureFrame,
     toolbar: captureToolbar,
     preview: capturePreview,
-  } = useMapCapture({ groups, labelByGroup, finalOrder, fileName });
+  } = useMapCapture({ labelByGroup, finalOrder, fileName });
 
   /**
    * 캡처 모드로 들어간다. 표에서 남은 hover·선택 강조는 지운다.
@@ -494,9 +526,12 @@ export function ResultScreen() {
             onGroupClick={capturing ? ignoreGroupClick : onMarkerClick}
           />
           <MapPan target={panTarget} />
-          <MapFit points={captureFitPoints} />
+          <MapBridge onChange={onMapContext} />
           {capturing ? (
-            <MarkerPositions groups={groups} onChange={onMarkerPoints} />
+            <>
+              <MarkerPositions groups={groups} onChange={onMarkerPoints} />
+              <MapInteraction {...captureInteraction} />
+            </>
           ) : null}
         </MapCanvas>
         {captureFrame ? <CaptureFrame {...captureFrame} /> : null}
@@ -510,6 +545,20 @@ export function ResultScreen() {
           className="ro-s6"
           title="배송 순서 결과"
           note={`원본 ${rows.length}행 → 결과 ${resultRows.length}건`}
+          collapsed={panelCollapsed && !editing}
+          onToggleCollapsed={togglePanel}
+          collapseBlockedReason={editing ? '순서 편집 중에는 접을 수 없습니다' : undefined}
+          collapsedSummary={
+            lastDownload ? (
+              <span className={staleDownload ? 'ro-warn-text' : undefined}>
+                {staleDownload
+                  ? `${lastDownload.at}에 받은 뒤 순서가 바뀌었습니다 · 펼쳐서 다시 받으세요`
+                  : `${lastDownload.at} 엑셀 내려받음`}
+              </span>
+            ) : (
+              '아직 내려받지 않았습니다 · 펼쳐서 엑셀·지도 캡처'
+            )
+          }
           bodyClassName="ro-panel__scroll"
           bodyRef={listRef}
           footer={
