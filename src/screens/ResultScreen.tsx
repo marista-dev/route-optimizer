@@ -16,6 +16,7 @@ import {
   MapBridge,
   MapCanvas,
   MapInteraction,
+  MapLevel,
   MarkerLayer,
   MarkerPositions,
   RouteLayer,
@@ -304,6 +305,7 @@ export function ResultScreen() {
     attachCanvas,
     onPoints: onMarkerPoints,
     onMapContext,
+    onMapLevel,
     interaction: captureInteraction,
     frame: captureFrame,
     toolbar: captureToolbar,
@@ -531,6 +533,7 @@ export function ResultScreen() {
             <>
               <MarkerPositions groups={groups} onChange={onMarkerPoints} />
               <MapInteraction {...captureInteraction} />
+              <MapLevel onChange={onMapLevel} />
             </>
           ) : null}
         </MapCanvas>

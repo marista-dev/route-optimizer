@@ -181,6 +181,72 @@ export function fitA4Frame(
   };
 }
 
+/** 캡처 프레임 크기 배율 하한. 최대 프레임({@link fitA4Frame}) 대비 비율이다. */
+export const FRAME_SCALE_MIN = 0.4;
+/** 캡처 프레임 크기 배율 상한(최대 프레임 그대로). */
+export const FRAME_SCALE_MAX = 1;
+
+/**
+ * 배율을 허용 범위로 자른다. 범위는 [{@link FRAME_SCALE_MIN}, {@link FRAME_SCALE_MAX}]이고,
+ * 짧은 변이 `minShort`보다 작아지지 않게 하한을 더 올린다. 최대 프레임 자체가 `minShort`보다
+ * 작으면 줄일 수 없으므로 늘 1이다. 유한한 수가 아니면 1로 본다.
+ */
+export function clampFrameScale(maxRect: Rect, scale: number, minShort = 160): number {
+  const short = Math.min(maxRect.width, maxRect.height);
+  if (!(short > 0) || short <= minShort) return FRAME_SCALE_MAX;
+  const lo = Math.min(Math.max(FRAME_SCALE_MIN, minShort / short), FRAME_SCALE_MAX);
+  const s = Number.isFinite(scale) ? scale : FRAME_SCALE_MAX;
+  return clamp(s, lo, FRAME_SCALE_MAX);
+}
+
+/**
+ * 최대 프레임 `maxRect`를 **중심을 고정한 채** `scale`배로 줄인 프레임(같은 좌표계, 정수 px).
+ *
+ * - 비율은 `maxRect`와 같다(A4). 크기는 내림하므로 1px 안쪽으로 어긋날 수 있다.
+ * - `scale`은 [{@link FRAME_SCALE_MIN}, 1]로 자르고, 짧은 변이 `minShort`(기본 160px)
+ *   아래로 내려가지 않게 더 자른다.
+ * - `maxRect`의 짧은 변이 이미 `minShort` 이하이면 `maxRect`를 그대로 돌려준다.
+ * - 원점은 반올림하고, 결과가 늘 `maxRect` 안에 들어가게 한다.
+ */
+export function scaleFrame(maxRect: Rect, scale: number, minShort = 160): Rect {
+  const s = clampFrameScale(maxRect, scale, minShort);
+  if (s >= FRAME_SCALE_MAX) return { ...maxRect };
+  const width = Math.max(Math.floor(maxRect.width * s + 1e-9), 1);
+  const height = Math.max(Math.floor(maxRect.height * s + 1e-9), 1);
+  const x = clamp(
+    Math.round(maxRect.x + (maxRect.width - width) / 2),
+    maxRect.x,
+    maxRect.x + maxRect.width - width,
+  );
+  const y = clamp(
+    Math.round(maxRect.y + (maxRect.height - height) / 2),
+    maxRect.y,
+    maxRect.y + maxRect.height - height,
+  );
+  return { x, y, width, height };
+}
+
+/**
+ * 프레임 모서리 핸들을 `pointer`까지 끌었을 때의 배율(중심 고정, 비율 유지).
+ *
+ * `pointer`는 `maxRect`와 같은 좌표계다. 중심에서 포인터까지 가로·세로 거리를 각각 반 너비·
+ * 반 높이로 나눈 값 중 큰 쪽을 배율로 삼는다 — 끈 모서리가 포인터에 닿고, 프레임이 포인터를
+ * 넘지 않는 가장 작은 크기다. 결과는 {@link scaleFrame}과 같은 규칙으로 잘라 돌려준다.
+ */
+export function scaleFromCornerDrag(
+  maxRect: Rect,
+  pointer: { x: number; y: number },
+  minShort = 160,
+): number {
+  const cx = maxRect.x + maxRect.width / 2;
+  const cy = maxRect.y + maxRect.height / 2;
+  const hw = maxRect.width / 2;
+  const hh = maxRect.height / 2;
+  const sx = hw > 0 ? Math.abs(pointer.x - cx) / hw : 0;
+  const sy = hh > 0 ? Math.abs(pointer.y - cy) / hh : 0;
+  return clampFrameScale(maxRect, Math.max(sx, sy), minShort);
+}
+
 /** 부동소수 비교 여유(px). `planPages`가 좌표를 거듭 옮기며 생기는 오차를 흡수한다. */
 const EPS = 1e-6;
 

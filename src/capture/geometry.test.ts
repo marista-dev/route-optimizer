@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   A4_RATIO,
+  FRAME_SCALE_MAX,
+  FRAME_SCALE_MIN,
   KAKAO_LOGO_ZONE,
   MARKER_RADIUS_PX,
   classifyPoint,
@@ -14,6 +16,8 @@ import {
   planNextWindow,
   planPages,
   roundPan,
+  scaleFrame,
+  scaleFromCornerDrag,
 } from './geometry';
 import type { MarkerPoint, Rect } from './types';
 
@@ -417,5 +421,109 @@ describe('roundPan', () => {
       dx: 0,
       dy: -1,
     });
+  });
+});
+
+describe('scaleFrame', () => {
+  const portrait: Rect = { x: 20, y: 10, width: 500, height: 707 };
+  const landscape: Rect = { x: 0, y: 30, width: 990, height: 700 };
+  const center = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+  const inside = (r: Rect, outer: Rect) =>
+    r.x >= outer.x &&
+    r.y >= outer.y &&
+    r.x + r.width <= outer.x + outer.width &&
+    r.y + r.height <= outer.y + outer.height;
+
+  it('배율 1은 최대 프레임 그대로다', () => {
+    expect(scaleFrame(portrait, 1)).toEqual(portrait);
+    expect(FRAME_SCALE_MAX).toBe(1);
+  });
+
+  it('세로: 중심과 비율을 지키며 줄인다', () => {
+    const r = scaleFrame(portrait, 0.5);
+    expect(r.width).toBe(250);
+    expect(r.height).toBe(353);
+    expect(Math.abs(center(r).x - center(portrait).x)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(center(r).y - center(portrait).y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(r.height / r.width - portrait.height / portrait.width)).toBeLessThan(0.01);
+    expect(inside(r, portrait)).toBe(true);
+    for (const v of Object.values(r)) expect(Number.isInteger(v)).toBe(true);
+  });
+
+  it('가로: 중심과 비율을 지키며 줄인다', () => {
+    const r = scaleFrame(landscape, 0.7);
+    expect(r.width).toBe(693);
+    expect(r.height).toBe(490);
+    expect(Math.abs(center(r).x - center(landscape).x)).toBeLessThanOrEqual(1);
+    expect(Math.abs(center(r).y - center(landscape).y)).toBeLessThanOrEqual(1);
+    expect(inside(r, landscape)).toBe(true);
+  });
+
+  it('배율은 [MIN, 1]로 잘린다', () => {
+    expect(scaleFrame(portrait, 2)).toEqual(portrait);
+    const big: Rect = { x: 0, y: 0, width: 1000, height: 1414 };
+    const r = scaleFrame(big, 0.1);
+    expect(r.width).toBe(Math.floor(1000 * FRAME_SCALE_MIN));
+    expect(r.height).toBe(Math.floor(1414 * FRAME_SCALE_MIN));
+  });
+
+  it('짧은 변이 minShort 아래로 내려가지 않는다', () => {
+    // 짧은 변 300 → 0.4배면 120이라 160/300 배까지만 줄인다
+    const r = scaleFrame({ x: 0, y: 0, width: 300, height: 424 }, 0.4);
+    expect(r.width).toBe(160);
+    const l = scaleFrame({ x: 0, y: 0, width: 424, height: 300 }, 0.4, 200);
+    expect(l.height).toBe(200);
+  });
+
+  it('최대 프레임이 minShort보다 작으면 그대로 돌려준다', () => {
+    const tiny: Rect = { x: 5, y: 5, width: 100, height: 141 };
+    expect(scaleFrame(tiny, 0.4)).toEqual(tiny);
+    expect(scaleFrame({ x: 0, y: 0, width: 1, height: 1 }, 0.5)).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  });
+
+  it('NaN 배율은 1로 본다', () => {
+    expect(scaleFrame(portrait, Number.NaN)).toEqual(portrait);
+  });
+});
+
+describe('scaleFromCornerDrag', () => {
+  const portrait: Rect = { x: 0, y: 0, width: 500, height: 708 };
+  const landscape: Rect = { x: 100, y: 0, width: 708, height: 500 };
+
+  it('모서리를 그대로 두면 1', () => {
+    expect(scaleFromCornerDrag(portrait, { x: 500, y: 708 })).toBe(1);
+    expect(scaleFromCornerDrag(portrait, { x: 0, y: 0 })).toBe(1);
+  });
+
+  it('중심 쪽으로 끌면 가로·세로 중 큰 비율을 쓴다', () => {
+    // 중심 (250, 354). 오른쪽 아래 모서리를 (400, 450)으로: x 150/250=0.6, y 96/354≈0.27
+    expect(scaleFromCornerDrag(portrait, { x: 400, y: 450 })).toBeCloseTo(0.6);
+    // 왼쪽 위 모서리를 (200, 100)으로: x 50/250=0.2, y 254/354≈0.717
+    expect(scaleFromCornerDrag(portrait, { x: 200, y: 100 })).toBeCloseTo(254 / 354);
+  });
+
+  it('가로 프레임에서도 같은 규칙이다', () => {
+    // 중심 (454, 250). (754, 300): x 300/354≈0.847, y 50/250=0.2
+    expect(scaleFromCornerDrag(landscape, { x: 754, y: 300 })).toBeCloseTo(300 / 354);
+  });
+
+  it('범위를 넘으면 잘린다', () => {
+    expect(scaleFromCornerDrag(portrait, { x: 900, y: 900 })).toBe(1);
+    // 중심에 가까우면 MIN(짧은 변 500×0.4=200 ≥ 160이라 MIN이 하한)
+    expect(scaleFromCornerDrag(portrait, { x: 250, y: 354 })).toBe(FRAME_SCALE_MIN);
+    // 짧은 변 300이면 160/300이 하한
+    expect(scaleFromCornerDrag({ x: 0, y: 0, width: 300, height: 424 }, { x: 150, y: 212 })).toBeCloseTo(
+      160 / 300,
+    );
+  });
+
+  it('최대 프레임이 minShort보다 작으면 늘 1', () => {
+    expect(scaleFromCornerDrag({ x: 0, y: 0, width: 100, height: 141 }, { x: 50, y: 70 })).toBe(1);
+  });
+
+  it('결과를 scaleFrame에 넣으면 끈 모서리가 포인터 근처에 온다', () => {
+    const s = scaleFromCornerDrag(portrait, { x: 400, y: 600 });
+    const r = scaleFrame(portrait, s);
+    expect(Math.abs(r.y + r.height - 600)).toBeLessThanOrEqual(1);
   });
 });

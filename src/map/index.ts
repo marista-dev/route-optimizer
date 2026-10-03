@@ -23,6 +23,10 @@ export type { MarkerPositionsProps } from './MarkerPositions';
 export { MapInteraction } from './MapInteraction';
 export type { MapInteractionProps } from './MapInteraction';
 
+export { MapLevel } from './MapLevel';
+export { useMapLevel } from './useMapLevel';
+export type { MapLevelProps } from './MapLevel';
+
 export { MapBridge } from './MapBridge';
 export type { MapBridgeProps } from './MapBridge';
 
