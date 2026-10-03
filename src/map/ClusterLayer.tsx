@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useMapContext } from './MapContext';
+import { attachOverlayPress, createRepeatGuard, mapDragNotifier } from './overlayPress';
 import { MAP_COLOR } from './palette';
 import type { Cluster } from '../types';
 
@@ -79,13 +80,15 @@ const Z_ORDER_BADGE = 10;
 
 /**
  * 중심 히트 타깃의 지름(px). 이 값이 유일한 출처다 — map.css는 크기를 정하지 않는다.
- * 44px 원이 화면에 30~40개 흩어지면 지도를 끌려고 누른 지점이 자주 원 안에 걸려
- * "가끔 지도가 안 움직인다"가 된다(이미 44→32로 한 번 줄인 이력이 있다).
- * 클릭은 여전히 넉넉한 선까지 줄였다.
+ * 예전에는 원 위에서 시작한 끌기가 지도로 가지 않아 "가끔 지도가 안 움직인다"가 되어
+ * 44→32로 줄였었다. 지금은 원 위에서 끌어도 `overlayPress.ts`가 지도를 옮기므로
+ * 그 이유가 사라져 손가락 크기(44px)로 되돌렸다.
  */
-const HIT_SIZE_PX = 32;
-/** 이만큼 넘게 끌었으면 클릭으로 치지 않는다(지도를 옮기려던 손). */
+const HIT_SIZE_PX = 44;
+/** 이만큼 넘게 끌었으면 클릭으로 치지 않고 지도를 끈다(지도를 옮기려던 손). */
 const DRAG_SLOP_PX = 5;
+/** 같은 클러스터를 이 시간(ms) 안에 다시 누르면 무시한다(더블클릭이 두 번 선택되지 않게). */
+const REPEAT_CLICK_MS = 300;
 
 /**
  * 모드별로 무엇이 켜지는지 한곳에서 본다.
@@ -308,6 +311,13 @@ export function ClusterLayer({
 
     const listeners: Array<[any, string, (event: any) => void]> = [];
     const domCleanups: Array<() => void> = [];
+    /**
+     * 더블클릭 가드. 카카오 다각형 `click`은 DOM 이벤트가 아니라 `detail`이 없으므로 시간으로 막는다.
+     * 다각형과 히트 타깃이 같은 판정기를 써서, 둘을 번갈아 눌러도 한 번으로 친다.
+     * S4에서는 두 번째 클릭이 방금 매긴 순번을 해제해 버린다.
+     */
+    const isRepeat = createRepeatGuard<number>(REPEAT_CLICK_MS);
+    const getMap = () => latest.current.map;
 
     const entries: ClusterEntry[] = clusters.map((cluster) => {
       const path = cluster.hull.map(
@@ -369,6 +379,7 @@ export function ClusterLayer({
       };
       /** 다각형·히트 타깃이 공유하는 선택 동작. `ll`은 카카오 LatLng. */
       const select = (ll: any) => {
+        if (isRepeat(cluster.id, performance.now())) return;
         const cur = latest.current;
         if (MODE[cur.mode].infoWindow && cur.memberSummary) {
           infoWindow.setContent(cur.memberSummary(cluster.id));
@@ -391,7 +402,7 @@ export function ClusterLayer({
       );
 
       // 배율이 낮으면 1건짜리 클러스터 다각형은 몇 px밖에 안 돼 클릭이 빗나간다.
-      // 중심에 배율과 무관한 고정 크기(44px) 투명 원을 얹어 클릭을 받는다.
+      // 중심에 배율과 무관한 고정 크기(`HIT_SIZE_PX`) 투명 원을 얹어 클릭을 받는다.
       // 클릭이 필요 없는 화면(S5의 dim)에서는 만들지 않는다 — 마커 클릭을 가리면 안 된다.
       let hitOverlay: any = null;
       if (interactive) {
@@ -401,20 +412,13 @@ export function ClusterLayer({
         hitEl.setAttribute('role', 'presentation');
         hitEl.style.width = `${HIT_SIZE_PX}px`;
         hitEl.style.height = `${HIT_SIZE_PX}px`;
-        // 누른 자리에서 끌었으면 클릭으로 치지 않는다 — 지도를 옮기려던 손이
+        // 누른 자리에서 끌었으면 클릭으로 치지 않고 지도를 옮긴다 — 지도를 옮기려던 손이
         // 방문 순서를 바꾸면 되돌릴 길이 없다.
-        let downAt: { x: number; y: number } | null = null;
-        const onHitDown = (event: MouseEvent) => {
-          downAt = { x: event.clientX, y: event.clientY };
-        };
-        const onHitClick = (event: MouseEvent) => {
-          const moved =
-            downAt !== null &&
-            Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > DRAG_SLOP_PX;
-          downAt = null;
-          if (moved) return;
-          select(centroidLL);
-        };
+        const detachPress = attachOverlayPress(hitEl, getMap, {
+          onClick: () => select(centroidLL),
+          slop: DRAG_SLOP_PX,
+          ...mapDragNotifier(getMap),
+        });
         const onHitEnter = () => {
           const cur = latest.current;
           hoverEl.textContent = labelNow();
@@ -426,13 +430,10 @@ export function ClusterLayer({
           hoverOverlay.setMap(null);
           applyStyles();
         };
-        hitEl.addEventListener('mousedown', onHitDown);
-        hitEl.addEventListener('click', onHitClick);
         hitEl.addEventListener('mouseenter', onHitEnter);
         hitEl.addEventListener('mouseleave', onHitLeave);
         domCleanups.push(() => {
-          hitEl.removeEventListener('mousedown', onHitDown);
-          hitEl.removeEventListener('click', onHitClick);
+          detachPress();
           hitEl.removeEventListener('mouseenter', onHitEnter);
           hitEl.removeEventListener('mouseleave', onHitLeave);
         });

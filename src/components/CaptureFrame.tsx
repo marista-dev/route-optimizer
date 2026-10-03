@@ -7,8 +7,6 @@ export interface CaptureFrameProps {
   rect: Rect;
   /** 프레임 왼쪽 위에 붙는 짧은 라벨(예: "A4 세로 · 이 장 12~27, 103~110"). 길면 말줄임 */
   label?: string;
-  /** 라벨 전체 문구(tooltip). 없으면 `label`을 그대로 쓴다 */
-  labelTitle?: string;
   /** 프레임 경계에 걸쳐 잘리는 마커들. 주황 링으로 알려 준다 */
   edgeMarkers?: MarkerPoint[];
   /** 이미 저장한 장에 온전히 들어간 마커들. 오른쪽 위에 ✓ 배지를 띄운다 */
@@ -34,15 +32,15 @@ const BADGE_SIZE = 14;
  * 지도 위에 얹는 고정 A4 캡처 프레임.
  *
  * 지도 컨테이너와 같은 자리·크기의 DOM 오버레이다(카카오 오버레이가 아니다).
- * 프레임은 움직이지 않고 사용자가 아래의 지도를 끌어 맞춘다. 그래서 라벨 말고는 모든 요소가
- * `pointer-events: none`이다. 라벨만은 tooltip(`title`)이 떠야 하므로 포인터를 받는다 —
- * 프레임 바깥 여백에 붙은 작은 칩이라 지도 끌기를 거의 막지 않고, 흐려질 때는 그마저 통과시킨다.
+ * 프레임은 움직이지 않고 사용자가 아래의 지도를 끌어 맞춘다. 그래서 라벨까지 모든 요소가
+ * `pointer-events: none`이다. 라벨 칩은 예전에 tooltip(`title`)을 띄우려고 포인터를 받았지만,
+ * 칩 위에서 시작한 끌기가 지도로 가지 않아 "가끔 지도가 안 움직인다"가 되므로 tooltip을 포기했다.
+ * 칩 문구가 곧 전체 정보이고(장 크기·이 장의 순번), 저장 진행은 하단 독의 개수가 알려 준다.
  * 프레임 바깥 어두운 처리는 큰 `box-shadow` 하나로 그리고 컨테이너의 `overflow: hidden`으로 자른다(컨테이너 크기를 따로 받지 않아도 된다).
  */
 export function CaptureFrame({
   rect,
   label,
-  labelTitle,
   edgeMarkers,
   capturedMarkers,
   markerRadius,
@@ -100,7 +98,7 @@ export function CaptureFrame({
         style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
       >
         {label ? (
-          <div className="ro-capture-label ro-capture-deco" title={labelTitle ?? label}>
+          <div className="ro-capture-label ro-capture-deco">
             {label}
           </div>
         ) : null}

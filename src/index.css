@@ -1306,7 +1306,7 @@ input::placeholder {
 .ro-capture.is-faded .ro-capture-deco {
   opacity: 0.25;
 }
-/* 프레임 왼쪽 위 바깥에 붙는 칩. tooltip(title)이 떠야 하므로 이것만 포인터를 받는다. */
+/* 프레임 왼쪽 위 바깥에 붙는 칩. 지도 끌기를 막지 않도록 포인터를 받지 않는다(tooltip 없음). */
 .ro-capture-label {
   position: absolute;
   left: -2px;
@@ -1323,12 +1323,8 @@ input::placeholder {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  pointer-events: auto;
-  cursor: default;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-}
-.ro-capture.is-faded .ro-capture-label {
   pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
 /* 걸쳐 잘리는 마커 표시. 흰 바깥선으로 지도·마커 어느 색 위에서도 보이게 한다. */
 .ro-capture-ring {
