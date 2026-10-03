@@ -20,6 +20,12 @@ export type { MarkerLayerProps } from './MarkerLayer';
 export { MarkerPositions } from './MarkerPositions';
 export type { MarkerPositionsProps } from './MarkerPositions';
 
+export { MapInteraction } from './MapInteraction';
+export type { MapInteractionProps } from './MapInteraction';
+
+export { MapBridge } from './MapBridge';
+export type { MapBridgeProps } from './MapBridge';
+
 export { RouteLayer } from './RouteLayer';
 export type { RouteLayerProps, RouteStyle } from './RouteLayer';
 

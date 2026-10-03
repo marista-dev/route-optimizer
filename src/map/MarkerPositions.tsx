@@ -14,8 +14,11 @@ export interface MarkerPositionsProps {
   onChange: (points: MarkerPoint[]) => void;
 }
 
-/** 다시 계산할 지도 이벤트. `idle`만 받으면 끄는 동안 주황 테두리가 늦게 따라온다 */
-const MAP_EVENTS = ['idle', 'zoom_changed', 'center_changed'] as const;
+/**
+ * 다시 계산할 지도 이벤트. `idle`만 받으면 끄는 동안 주황 테두리가 늦게 따라온다.
+ * `bounds_changed`는 컨테이너 크기만 바뀐 뒤의 `relayout()`(캡처 모드에서 헤더를 접을 때)도 잡는다.
+ */
+const MAP_EVENTS = ['idle', 'zoom_changed', 'center_changed', 'bounds_changed'] as const;
 
 /**
  * 1차 그룹 마커의 화면 좌표를 콜백으로 올려 주는 보이지 않는 레이어.

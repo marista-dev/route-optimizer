@@ -6,7 +6,7 @@
  * - 비디오 좌표: `getDisplayMedia` 프레임의 실제 픽셀. 기기 배율(DPR)과
  *   크롬의 "공유 중" 바 때문에 화면 좌표와 비율이 다르다.
  */
-import type { MarkerPoint, PointPlacement, Rect, Size } from './types';
+import type { MarkerPoint, Orientation, PointPlacement, Rect, Size, WindowPlan } from './types';
 
 /**
  * 순번 마커 반지름(px). 판정 여유로 쓴다.
@@ -25,31 +25,6 @@ export const MARKER_RADIUS_PX = 19;
  * 지도 컨테이너 왼쪽 아래 모서리에서 잰 너비·높이다.
  */
 export const KAKAO_LOGO_ZONE: Size = { width: 80, height: 30 };
-
-/** 두 점을 대각선 끝으로 하는 사각형. 어느 방향으로 끌어도 너비·높이는 양수다. */
-export function normalizeRect(a: { x: number; y: number }, b: { x: number; y: number }): Rect {
-  return {
-    x: Math.min(a.x, b.x),
-    y: Math.min(a.y, b.y),
-    width: Math.abs(a.x - b.x),
-    height: Math.abs(a.y - b.y),
-  };
-}
-
-/**
- * 사각형을 `bounds`(0,0 기준) 안으로 밀어 넣고 최소 크기를 지킨다.
- *
- * 크기가 bounds보다 크면 bounds에 맞춰 줄이고, 최소 크기보다 작으면 늘린다
- * (단, bounds보다 커지지는 않는다). 그다음 위치를 안쪽으로 민다 —
- * 끌다가 가장자리에 닿으면 크기는 그대로 두고 멈추게 하려는 것이다.
- */
-export function clampRect(rect: Rect, bounds: Size, minSize: number): Rect {
-  const width = Math.min(Math.max(rect.width, minSize), bounds.width);
-  const height = Math.min(Math.max(rect.height, minSize), bounds.height);
-  const x = Math.min(Math.max(rect.x, 0), Math.max(bounds.width - width, 0));
-  const y = Math.min(Math.max(rect.y, 0), Math.max(bounds.height - height, 0));
-  return { x, y, width, height };
-}
 
 /**
  * 화면(window 기준 CSS px) 사각형을 비디오 프레임 픽셀 좌표로 바꾼다.
@@ -151,4 +126,317 @@ export function includesKakaoLogo(rect: Rect, container: Size): boolean {
     rect.y <= zoneTop &&
     rect.y + rect.height >= container.height
   );
+}
+
+/** A4 용지의 긴 변 : 짧은 변 비율(1:√2). */
+export const A4_RATIO = Math.SQRT2;
+
+/** 유한한 수가 아니면 0으로 본다(NaN·Infinity 방어). */
+function finite(v: number): number {
+  return Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * 지도 컨테이너 안에 들어가는 가장 큰 A4 프레임(지도 컨테이너 기준 CSS px).
+ *
+ * 쓸 수 있는 영역은 컨테이너에서 사방 `margin`을 빼고, 아래쪽은 `reserveBottom`
+ * (하단 독 자리)을 더 뺀 범위다. 그 안에서 가장 큰 A4 사각형을 구해 가로·세로 모두
+ * 가운데에 놓는다.
+ * - 세로(`portrait`): 높이 = 너비 × √2
+ * - 가로(`landscape`): 너비 = 높이 × √2
+ *
+ * 결과는 정수다. 크기는 내림해서 영역을 넘지 않게 한다(그래서 비율은 1px 안쪽으로
+ * 어긋날 수 있다). 컨테이너가 0 이하이거나 너무 작으면 너비·높이를 1px로 둔다 — NaN은
+ * 나오지 않는다.
+ */
+export function fitA4Frame(
+  container: Size,
+  orientation: Orientation,
+  reserveBottom: number,
+  margin: number,
+): Rect {
+  const m = Math.max(finite(margin), 0);
+  const availW = finite(container.width) - 2 * m;
+  const availH = finite(container.height) - 2 * m - Math.max(finite(reserveBottom), 0);
+  const w0 = Math.max(availW, 0);
+  const h0 = Math.max(availH, 0);
+
+  let width: number;
+  let height: number;
+  if (orientation === 'portrait') {
+    width = Math.min(w0, h0 / A4_RATIO);
+    height = width * A4_RATIO;
+  } else {
+    height = Math.min(h0, w0 / A4_RATIO);
+    width = height * A4_RATIO;
+  }
+  width = Math.max(Math.floor(width + 1e-9), 1);
+  height = Math.max(Math.floor(height + 1e-9), 1);
+
+  return {
+    x: Math.round(m + (availW - width) / 2),
+    y: Math.round(m + (availH - height) / 2),
+    width,
+    height,
+  };
+}
+
+/** 부동소수 비교 여유(px). `planPages`가 좌표를 거듭 옮기며 생기는 오차를 흡수한다. */
+const EPS = 1e-6;
+
+/** 오름차순 배열에서 `v` 이하인 원소 개수. */
+function countAtMost(sorted: readonly number[], v: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] <= v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** 오름차순 배열에서 `v` 미만인 원소 개수. */
+function countLess(sorted: readonly number[], v: number): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** 닫힌 구간 하나. */
+interface Span {
+  lo: number;
+  hi: number;
+}
+
+/**
+ * 한 축에서 창 시작 위치 후보를 만든다. `range`(anchor가 들어가는 범위) 안의
+ * 각 구간 끝점, 범위 양 끝, 그리고 현재 위치(`current`, 범위로 잘라 냄)다.
+ *
+ * "어떤 마커 집합이 모두 들어가는 위치"는 구간들의 교집합이고, 그 안에서 현재 위치에
+ * 가장 가까운 점은 교집합 끝점이거나 현재 위치 자체다. 그래서 이 후보만 보면
+ * (개수 최대 → 이동 최소) 기준의 최적해를 놓치지 않는다.
+ */
+function axisCandidates(spans: readonly Span[], range: Span, current: number): number[] {
+  const out = [range.lo, range.hi, clamp(current, range.lo, range.hi)];
+  for (const s of spans) {
+    if (s.lo >= range.lo && s.lo <= range.hi) out.push(s.lo);
+    if (s.hi >= range.lo && s.hi <= range.hi) out.push(s.hi);
+  }
+  out.sort((a, b) => a - b);
+  // 중복 제거
+  const uniq: number[] = [];
+  for (const v of out) if (uniq.length === 0 || v - uniq[uniq.length - 1] > EPS) uniq.push(v);
+  return uniq;
+}
+
+/**
+ * 다음에 찍을 창 위치를 고른다.
+ *
+ * `points`는 지도 컨테이너 기준 마커 중심 좌표(px)다. 화면 밖(음수 포함)이어도 된다.
+ * `frame`과 같은 크기의 창을 움직여 보며,
+ * 1. anchor 마커 원이 창 안에 온전히 들어가야 하고(필수),
+ * 2. `remaining` 마커가 온전히(원 전체) 들어가는 개수가 가장 많고,
+ * 3. 같으면 현재 프레임 위치에서 이동량 |dx|+|dy|가 가장 작은 위치를 고른다.
+ *
+ * 마커 원이 창 안에 있다는 것은 창 왼쪽 L이 [p.x + r − w, p.x − r] 안에 있다는 뜻이다
+ * (세로도 같다). 그래서 문제는 "가로 구간·세로 구간을 동시에 가장 많이 덮는 점 찾기"가 된다.
+ *
+ * 복잡도: 가로 후보 O(n)마다, 그 L을 덮는 마커만 골라 세로 후보 O(n)를 이분 탐색으로
+ * 세므로 O(n² log n)이다. 마커 500개에서 수십 ms 수준이다.
+ *
+ * 결과 `dx`/`dy`는 `chosenLeft − frame.x`, `chosenTop − frame.y`다. 카카오
+ * `map.panBy(dx, dy)`는 지도 중심을 +dx, +dy px 옮기므로 내용은 −dx, −dy 만큼 움직여
+ * 고른 창이 프레임 자리에 온다. 값은 반올림하지 않는다(정확한 포함 판정을 지키려고).
+ * `groupIds`는 고른 창에 온전히 들어가는 남은 그룹이며 anchor를 늘 포함한다.
+ *
+ * anchor가 `points`에 없으면 `null`. 마커 지름이 프레임보다 커서 anchor가 온전히
+ * 들어갈 수 없으면 anchor를 창 가운데에 두고, `groupIds`는 anchor 하나만 담는다
+ * (반복 호출이 끝나도록).
+ */
+export function planNextWindow(
+  points: readonly MarkerPoint[],
+  remaining: ReadonlySet<number>,
+  anchorId: number,
+  frame: Rect,
+  radius: number,
+): WindowPlan | null {
+  const anchor = points.find((p) => p.groupId === anchorId);
+  if (!anchor) return null;
+
+  const w = frame.width;
+  const h = frame.height;
+  const r = Math.max(radius, 0);
+
+  if (2 * r > w || 2 * r > h) {
+    return {
+      dx: anchor.x - w / 2 - frame.x,
+      dy: anchor.y - h / 2 - frame.y,
+      groupIds: [anchorId],
+    };
+  }
+
+  const xRange: Span = { lo: anchor.x + r - w, hi: anchor.x - r };
+  const yRange: Span = { lo: anchor.y + r - h, hi: anchor.y - r };
+
+  // anchor 범위와 겹칠 수 있는 남은 마커만 남긴다(anchor 자신은 따로 센다).
+  const seen = new Set<number>([anchorId]);
+  const cands: { id: number; x: Span; y: Span }[] = [];
+  for (const p of points) {
+    if (seen.has(p.groupId) || !remaining.has(p.groupId)) continue;
+    seen.add(p.groupId);
+    const x: Span = { lo: p.x + r - w, hi: p.x - r };
+    const y: Span = { lo: p.y + r - h, hi: p.y - r };
+    if (x.hi < xRange.lo - EPS || x.lo > xRange.hi + EPS) continue;
+    if (y.hi < yRange.lo - EPS || y.lo > yRange.hi + EPS) continue;
+    cands.push({ id: p.groupId, x, y });
+  }
+
+  const lefts = axisCandidates(
+    cands.map((c) => c.x),
+    xRange,
+    frame.x,
+  );
+
+  let bestCount = -1;
+  let bestCost = Infinity;
+  let bestL = xRange.lo;
+  let bestT = yRange.lo;
+
+  for (const L of lefts) {
+    const active = cands.filter((c) => c.x.lo <= L + EPS && L <= c.x.hi + EPS);
+    // 이 L에서 얻을 수 있는 최대치도 지금 최선보다 작으면 건너뛴다.
+    if (active.length < bestCount) continue;
+    const costX = Math.abs(L - frame.x);
+    if (active.length === bestCount && costX >= bestCost) continue;
+
+    const ys = active.map((c) => c.y);
+    const los = ys.map((s) => s.lo).sort((a, b) => a - b);
+    const his = ys.map((s) => s.hi).sort((a, b) => a - b);
+    for (const T of axisCandidates(ys, yRange, frame.y)) {
+      const count = countAtMost(los, T + EPS) - countLess(his, T - EPS);
+      const cost = costX + Math.abs(T - frame.y);
+      if (count > bestCount || (count === bestCount && cost < bestCost - EPS)) {
+        bestCount = count;
+        bestCost = cost;
+        bestL = L;
+        bestT = T;
+      }
+    }
+  }
+
+  const groupIds = [anchorId];
+  for (const c of cands) {
+    if (
+      c.x.lo <= bestL + EPS &&
+      bestL <= c.x.hi + EPS &&
+      c.y.lo <= bestT + EPS &&
+      bestT <= c.y.hi + EPS
+    ) {
+      groupIds.push(c.id);
+    }
+  }
+
+  return { dx: bestL - frame.x, dy: bestT - frame.y, groupIds };
+}
+
+/**
+ * 남은 그룹 중 순번이 가장 빠른 것. 순번을 모르는(`undefined`) 그룹은 맨 뒤로 보내고,
+ * 순번이 같으면 groupId가 작은 쪽을 고른다. 비어 있으면 `undefined`.
+ */
+export function nextAnchor(
+  remaining: ReadonlySet<number>,
+  orderOf: (groupId: number) => number | undefined,
+): number | undefined {
+  let best: number | undefined;
+  let bestOrder = Infinity;
+  for (const id of remaining) {
+    const order = orderOf(id) ?? Infinity;
+    if (best === undefined || order < bestOrder || (order === bestOrder && id < best)) {
+      best = id;
+      bestOrder = order;
+    }
+  }
+  return best;
+}
+
+/**
+ * 남은 그룹이 모두 찍힐 때까지 {@link planNextWindow}를 반복한 계획(확대 수준 고정).
+ *
+ * 매번 anchor는 {@link nextAnchor}로 고른다. 한 장을 계획하면 그 장의 `groupIds`를
+ * 남은 목록에서 빼고, 모든 마커 좌표를 (−dx, −dy)만큼 옮겨 `panBy` 이후의 화면을
+ * 흉내 낸다. 그래서 **각 장의 `dx`/`dy`는 바로 앞 장 위치 기준**이다 — 결과를 순서대로
+ * `map.panBy(dx, dy)` 하면 된다. 첫 장은 현재 화면(`points`) 기준이다.
+ *
+ * `points`에 좌표가 없는 그룹은 건너뛴다. `maxPages`장에서 멈춘다(무한 반복 방지).
+ */
+export function planPages(
+  points: readonly MarkerPoint[],
+  remaining: ReadonlySet<number>,
+  orderOf: (groupId: number) => number | undefined,
+  frame: Rect,
+  radius: number,
+  maxPages = 200,
+): WindowPlan[] {
+  const left = new Set(remaining);
+  let current: MarkerPoint[] = points.map((p) => ({ ...p }));
+  const pages: WindowPlan[] = [];
+
+  while (left.size > 0 && pages.length < maxPages) {
+    const anchorId = nextAnchor(left, orderOf);
+    if (anchorId === undefined) break;
+    const plan = planNextWindow(current, left, anchorId, frame, radius);
+    if (!plan) {
+      left.delete(anchorId);
+      continue;
+    }
+    pages.push(plan);
+    for (const id of plan.groupIds) left.delete(id);
+    current = current.map((p) => ({ groupId: p.groupId, x: p.x - plan.dx, y: p.y - plan.dy }));
+  }
+  return pages;
+}
+
+/**
+ * {@link planNextWindow} 결과의 `dx`/`dy`를 `map.panBy`에 넘길 정수로 바꾼다.
+ *
+ * 고른 창은 대개 어떤 마커가 프레임 경계에 딱 붙는 자리라, 그냥 반올림하면 0.5px 차이로
+ * 그 마커가 "걸침"이 될 수 있다. 그래서 가로·세로 각각 내림·올림 네 가지를 모두 해 보고,
+ * 옮긴 뒤 `plan.groupIds`가 프레임에 온전히 가장 많이 들어가는 쪽을 고른다
+ * (같으면 원래 값에 가까운 쪽). `points`는 `planNextWindow`에 넘긴 것과 같은 좌표다.
+ */
+export function roundPan(
+  points: readonly MarkerPoint[],
+  plan: WindowPlan,
+  frame: Rect,
+  radius: number,
+): { dx: number; dy: number } {
+  const wanted = new Set(plan.groupIds);
+  const targets = points.filter((p) => wanted.has(p.groupId));
+  const xs = [...new Set([Math.floor(plan.dx), Math.ceil(plan.dx)])];
+  const ys = [...new Set([Math.floor(plan.dy), Math.ceil(plan.dy)])];
+
+  let best = { dx: Math.round(plan.dx), dy: Math.round(plan.dy) };
+  let bestCount = -1;
+  let bestCost = Infinity;
+  for (const dx of xs) {
+    for (const dy of ys) {
+      let count = 0;
+      for (const p of targets) {
+        if (classifyPoint({ x: p.x - dx, y: p.y - dy }, frame, radius) === 'inside') count++;
+      }
+      const cost = Math.abs(dx - plan.dx) + Math.abs(dy - plan.dy);
+      if (count > bestCount || (count === bestCount && cost < bestCost)) {
+        best = { dx, dy };
+        bestCount = count;
+        bestCost = cost;
+      }
+    }
+  }
+  return best;
 }
