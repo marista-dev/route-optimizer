@@ -332,18 +332,14 @@ export function useMapCapture({
     [labeledPoints, capturedGroups, bounds],
   );
 
-  const { label, labelTitle } = useMemo(() => {
+  const label = useMemo(() => {
     const paper = `A4 ${orientation === 'portrait' ? '세로' : '가로'}`;
     const inside = labeledPoints.filter((p) => placement.get(p.groupId) === 'inside');
     if (inside.length === 0) {
-      const text = `${paper} · 이 장에 온전히 든 순번 없음`;
-      return { label: text, labelTitle: text };
+      return `${paper} · 이 장에 온전히 든 순번 없음`;
     }
     const ranges = formatOrderRanges(inside.flatMap((p) => labelByGroup.get(p.groupId) ?? []));
-    return {
-      label: `${paper} · 이 장 ${ranges}`,
-      labelTitle: `${paper} · 이 장에 온전히 든 순번 ${ranges} (${inside.length}곳)`,
-    };
+    return `${paper} · 이 장 ${ranges} (${inside.length}곳)`;
   }, [orientation, labeledPoints, placement, labelByGroup]);
 
   // ── 찍은 순번 / 남은 순번 ─────────────────────────────────────────────────
@@ -687,7 +683,6 @@ export function useMapCapture({
     ? {
         rect: frameRect,
         label,
-        labelTitle,
         edgeMarkers,
         capturedMarkers,
         markerRadius: MARKER_RADIUS_PX,

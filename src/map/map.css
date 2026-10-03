@@ -7,6 +7,31 @@
   min-height: 0;
 }
 
+/*
+ * 지도 위 글자(순번·건수·라벨)를 누르거나 끌거나 더블클릭해도 파란 선택 블록이 생기지 않게 한다.
+ * 표·패널은 지도 밖이라 주소 복사는 그대로 된다. 이미 걸린 선택 해제는 MapCanvas가 맡는다.
+ */
+.ro-map,
+.ro-map * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/*
+ * 클릭되지 않는 오버레이는 지도 커서(손바닥)를 그대로 따른다 — 글자 위 I자 커서가 뜨지 않게.
+ * 클릭되는 것(`.ro-marker.is-clickable`, `.ro-cluster-hit`)만 아래에서 pointer를 준다.
+ */
+.ro-marker:not(.is-clickable),
+.ro-cluster-order,
+.ro-cluster-label,
+.ro-origin,
+.ro-marker-label,
+.ro-refpoint {
+  cursor: inherit;
+}
+
 .ro-map__canvas {
   position: absolute;
   inset: 0;
@@ -81,9 +106,14 @@
 }
 
 /* onGroupClick이 있는 화면에서만 켠다(MarkerLayer.tsx의 `is-clickable`) —
-   S3·S4는 마커 클릭이 no-op이라 손가락 커서로 약속하지 않는다. */
+   S3·S4는 마커 클릭이 no-op이라 손가락 커서로 약속하지 않는다.
+   눌러서 끌면 overlayPress.ts가 지도를 옮기므로 브라우저 터치 스크롤은 끈다. */
 .ro-marker.is-clickable {
   cursor: pointer;
+  touch-action: none;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
 }
 
 /*
@@ -250,14 +280,15 @@
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
+  touch-action: none;
 }
 
 /* 마커도 같은 이유로 실제 배지보다 넓은 영역에서 클릭을 받는다(S5 진입·이탈). */
 .ro-marker::before {
   content: '';
   position: absolute;
-  inset: -8px;
-  border-radius: 16px;
+  inset: -10px;
+  border-radius: 18px;
 }
 
 /* S6에서 표 행에 호버했을 때 강조되는 마커. */
@@ -266,6 +297,39 @@
   background: #6d28d9;
   transform: scale(1.3);
   box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.28);
+}
+
+/*
+ * 누를 대상 미리 보이기 — 클릭 가능한 마커에 마우스를 올리면 살짝 커지고 바깥 링이 생긴다.
+ * (MarkerLayer가 같은 순간 zIndex를 올려 겹친 마커 위로 꺼낸다.)
+ * 링은 `outline`으로 그린다: 상태별 `box-shadow`(진입·이탈 링, 강조 링)와 겹쳐 쓰여도 서로 덮지 않는다.
+ * 크기는 상태별로 이미 쓰는 `transform`과 겨루지 않게 나눈다.
+ *  - 보통·순번 마커: 1 → 1.15
+ *  - 진입·이탈(이미 1.15): 1.25
+ *  - 강조(표 hover, 이미 1.3/1.45): 그대로 두고 링만
+ * 위 규칙들보다 뒤에 두어 같은 명시도에서도 이긴다.
+ */
+.ro-marker.is-clickable:hover {
+  outline: 2px solid rgba(22, 26, 34, 0.55);
+  outline-offset: 3px;
+}
+.ro-marker.is-clickable:hover:not(.is-highlight):not(.is-entry):not(.is-exit) {
+  transform: scale(1.15);
+}
+.ro-marker.is-clickable.is-entry:hover:not(.is-highlight),
+.ro-marker.is-clickable.is-exit:hover:not(.is-highlight) {
+  transform: scale(1.25);
+}
+/* 진입·이탈(5px 링)·강조(4px 링)는 자기 링 바깥에 hover 링을 둔다. */
+.ro-marker.is-clickable.is-entry:hover,
+.ro-marker.is-clickable.is-exit:hover,
+.ro-marker.is-clickable.is-highlight:hover {
+  outline-offset: 7px;
+}
+/* S6 캡처 모드에서는 마커 클릭이 no-op이고, 커서를 올려 둔 채 찍으면 링이 이미지에 남는다. */
+html.ro-capture-mode .ro-marker.is-clickable:hover {
+  outline: none;
+  transform: none;
 }
 
 /* S6 강조 마커 옆 라벨 — 배송순서 + 건물 이름. */

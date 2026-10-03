@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import { useMapContext } from './MapContext';
+import { attachOverlayPress, mapDragNotifier } from './overlayPress';
 import type { Origin, PrimaryGroup } from '../types';
 
 export interface MarkerLayerProps {
@@ -37,9 +38,17 @@ interface MarkerEntry {
   cleanup: () => void;
 }
 
-/** 강조되지 않은 마커의 zIndex. 강조 마커는 그 위로 올린다. */
+/**
+ * 강조되지 않은 마커의 zIndex. 강조 마커는 그 위로 올린다.
+ * 클릭 가능한 마커는 마우스를 올린 동안에도 강조 zIndex로 올려, 겹친 곳에서 무엇이 눌릴지 보이게 한다.
+ */
 const Z_MARKER = 5;
 const Z_MARKER_HIGHLIGHT = 8;
+
+/** 마커 하나의 zIndex. `applyStates`와 hover 처리가 같은 규칙을 쓴다. */
+function markerZ(highlighted: boolean, clickable: boolean, hovered: boolean): number {
+  return highlighted || (clickable && hovered) ? Z_MARKER_HIGHLIGHT : Z_MARKER;
+}
 
 /** 1차 그룹 마커 레이어. 진입·이탈 색과 순번 라벨은 재생성 없이 갱신한다. */
 export function MarkerLayer({
@@ -93,6 +102,11 @@ export function MarkerLayer({
   });
 
   const entriesRef = useRef<MarkerEntry[]>([]);
+  /**
+   * 마우스가 올라가 있는 클릭 가능한 마커. zIndex는 `applyStates`가 이 값과 강조 여부로
+   * 함께 정한다 — mouseenter/leave가 zIndex를 따로 만지면 다음 `applyStates`와 어긋난다.
+   */
+  const hoveredRef = useRef<number | null>(null);
   /** 강조 마커 위에 띄우는 라벨. 마커와 같은 수명이다 */
   const labelRef = useRef<{ overlay: any; el: HTMLDivElement } | null>(null);
 
@@ -133,7 +147,9 @@ export function MarkerLayer({
         highlighted = entry;
       }
       entry.root.className = classes.join(' ');
-      entry.overlay.setZIndex(isHighlight ? Z_MARKER_HIGHLIGHT : Z_MARKER);
+      entry.overlay.setZIndex(
+        markerZ(isHighlight, Boolean(cur.onGroupClick), hoveredRef.current === entry.id),
+      );
       entry.text.textContent = orderText;
       const tooltip = cur.tooltipOf?.(entry.id);
       if (tooltip) entry.root.title = tooltip;
@@ -180,13 +196,6 @@ export function MarkerLayer({
         root.appendChild(count);
       }
 
-      const onClick = () => latest.current.onGroupClick?.(group.id);
-      const onEnter = () => latest.current.onGroupHover?.(group.id);
-      const onLeave = () => latest.current.onGroupHover?.(null);
-      root.addEventListener('click', onClick);
-      root.addEventListener('mouseenter', onEnter);
-      root.addEventListener('mouseleave', onLeave);
-
       const position = new kakao.maps.LatLng(group.lat, group.lon);
       const overlay = new kakao.maps.CustomOverlay({
         content: root,
@@ -198,6 +207,40 @@ export function MarkerLayer({
       });
       overlay.setMap(map);
 
+      /** hover 상태가 바뀐 이 마커 하나의 zIndex만 다시 정한다(`applyStates`와 같은 규칙). */
+      const restack = () => {
+        const cur = latest.current;
+        overlay.setZIndex(
+          markerZ(
+            cur.highlightGroupId === group.id,
+            Boolean(cur.onGroupClick),
+            hoveredRef.current === group.id,
+          ),
+        );
+      };
+      const onEnter = () => {
+        hoveredRef.current = group.id;
+        restack();
+        latest.current.onGroupHover?.(group.id);
+      };
+      const onLeave = () => {
+        if (hoveredRef.current === group.id) hoveredRef.current = null;
+        restack();
+        latest.current.onGroupHover?.(null);
+      };
+      root.addEventListener('mouseenter', onEnter);
+      root.addEventListener('mouseleave', onLeave);
+
+      // 클릭 가능한 마커만: 누르고 끌면 지도를 옮기고(클릭 취소), 제자리에서 뗀 한 번만 클릭이다.
+      // 클릭할 수 없는 마커는 `clickable: false`라 끌기가 그대로 지도로 간다.
+      const getMap = () => latest.current.map;
+      const detachPress = hasClickHandler
+        ? attachOverlayPress(root, getMap, {
+            onClick: () => latest.current.onGroupClick?.(group.id),
+            ...mapDragNotifier(getMap),
+          })
+        : null;
+
       return {
         id: group.id,
         overlay,
@@ -205,7 +248,7 @@ export function MarkerLayer({
         root,
         text,
         cleanup: () => {
-          root.removeEventListener('click', onClick);
+          detachPress?.();
           root.removeEventListener('mouseenter', onEnter);
           root.removeEventListener('mouseleave', onLeave);
         },
@@ -223,6 +266,7 @@ export function MarkerLayer({
       labelOverlay.setMap(null);
       labelRef.current = null;
       entriesRef.current = [];
+      hoveredRef.current = null;
     };
   }, [map, groups, applyStates, hasClickHandler]);
 
