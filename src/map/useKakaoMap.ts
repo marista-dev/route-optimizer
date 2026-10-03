@@ -25,6 +25,11 @@ export interface UseKakaoMapResult {
   error: string | null;
   /** 주어진 좌표들이 모두 보이도록 화면을 맞춘다. 좌표가 없으면 아무 일도 하지 않는다 */
   fitBounds: (points: LatLng[]) => void;
+  /**
+   * 컨테이너 크기가 바뀐 뒤 지도에 다시 재라고 알린다(`map.relayout()`).
+   * 창 크기 변경은 SDK가 스스로 처리하므로, 레이아웃 변화로 컨테이너만 바뀐 경우에만 부른다.
+   */
+  relayout: () => void;
 }
 
 const SDK_MISSING =
@@ -86,5 +91,9 @@ export function useKakaoMap(
     m.setBounds(bounds);
   }, []);
 
-  return { map, error, fitBounds };
+  const relayout = useCallback(() => {
+    mapRef.current?.relayout();
+  }, []);
+
+  return { map, error, fitBounds, relayout };
 }

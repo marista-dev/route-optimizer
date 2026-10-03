@@ -7,11 +7,12 @@
 
 | 파일 | 역할 |
 |---|---|
-| `useKakaoMap.ts` | `kakao.maps.load` 뒤에 지도를 **한 번만** 생성. `{ map, error, fitBounds }` |
-| `MapContext.ts` | `map`·`fitBounds`를 레이어에 내려주는 컨텍스트 (`useMapContext()`) |
+| `useKakaoMap.ts` | `kakao.maps.load` 뒤에 지도를 **한 번만** 생성. `{ map, error, fitBounds, relayout }` |
+| `MapContext.ts` | `map`·`fitBounds`·`relayout`을 레이어에 내려주는 컨텍스트 (`useMapContext()`) |
 | `MapCanvas.tsx` | 전체 크기 지도 컨테이너. 훅을 소유하고 children을 컨텍스트로 감싼다 |
 | `ClusterLayer.tsx` | 클러스터 다각형 + hover 라벨 + 순번 라벨 + 인포윈도우 |
 | `MarkerLayer.tsx` | 1차 그룹 마커(멤버 수 배지·진입/이탈 색·순번 라벨) + 출발지 마커 |
+| `MarkerPositions.tsx` | 그리지 않는 레이어. 1차 그룹 마커의 화면 좌표(컨테이너 기준 px)를 지도 이동·확대·창 크기 변경 때마다 콜백으로 올린다(S6 캡처의 영역 판정용) |
 | `RouteLayer.tsx` | 좌표열들을 Polyline으로 |
 | `OrderLinkLayer.tsx` | 클러스터 중심을 방문 순서대로 잇는 점선 |
 | `RefPointLayer.tsx` | 클릭되지 않는 참고점 라벨(S5의 이전 위치 · 다음 클러스터 중심) |
@@ -36,6 +37,21 @@
 
 순번 숫자가 마커보다 위인 이유: 1건짜리 클러스터는 중심이 그 그룹의 좌표와 같아 마커·클릭 타깃과
 정확히 겹친다. 그 경우에는 숫자를 마커 위쪽으로 비켜 찍기까지 한다(`yAnchor`).
+
+### 지도 위 DOM(카카오 오버레이 아님)
+
+S6 캡처 모드의 영역 프레임(`components/CaptureFrame`)과 툴바(`components/CaptureToolbar`)는
+카카오 오버레이가 아니라 지도 컨테이너와 같은 자리에 얹는 일반 DOM이다. 그래서 위 표의 zIndex와는
+쌓임 맥락이 다르다. `.ro-map__canvas`에 `isolation: isolate`를 걸어 SDK 내부 z-index가 바깥으로
+새지 않게 했으므로, 바깥 요소는 CSS `z-index`만으로 순서가 정해진다.
+
+| CSS z-index | 요소 | 비고 |
+|---|---|---|
+| 10 | `.ro-panel`(SidePanel), `.ro-pill` | 캡처 모드에서는 패널을 렌더하지 않는다 |
+| 12 | `.ro-capture` 프레임·어두운 처리·잘림 표시 | 핸들과 이동 손잡이만 포인터를 받는다 |
+| 14 | `.ro-capture-toolbar` | |
+| 50 | `.ro-modal`(캡처 미리보기 포함) | |
+| 60 | `.ro-toast` | |
 
 ## 공통 규칙
 

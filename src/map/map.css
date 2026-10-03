@@ -10,6 +10,8 @@
 .ro-map__canvas {
   position: absolute;
   inset: 0;
+  /* SDK 내부 요소의 z-index가 바깥(패널·캡처 프레임)과 겨루지 않도록 쌓임 맥락을 가둔다. */
+  isolation: isolate;
 }
 
 .ro-map__error {

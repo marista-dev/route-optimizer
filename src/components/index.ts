@@ -1,3 +1,9 @@
+export { CaptureFrame } from './CaptureFrame';
+export type { CaptureFrameProps } from './CaptureFrame';
+export { CapturePreviewModal } from './CapturePreviewModal';
+export type { CapturePreviewModalProps } from './CapturePreviewModal';
+export { CaptureToolbar } from './CaptureToolbar';
+export type { CaptureToolbarProps } from './CaptureToolbar';
 export { DataTable } from './DataTable';
 export type { Column, DataTableProps } from './DataTable';
 export { FileDrop } from './FileDrop';

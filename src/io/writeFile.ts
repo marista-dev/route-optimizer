@@ -29,10 +29,22 @@ export const KEEP_COLUMNS = ['연번', '이름'] as const;
 /** 결과 파일 이름 접미사. `<원본이름>_배송순서완성.xlsx` */
 export const OUTPUT_SUFFIX = '_배송순서완성';
 
+/** 지도 캡처 이미지 파일 이름 접미사. `<원본이름>_배송지도_<번호>.png` */
+export const MAP_IMAGE_SUFFIX = '_배송지도';
+
+/** 업로드 파일명에서 확장자를 뗀 이름. 비면 `result`. */
+function baseName(fileName: string): string {
+  return fileName.replace(/\.[^./\\]+$/, '') || 'result';
+}
+
 /** 업로드 파일명에서 결과 파일명을 만든다. */
 export function outputFileName(fileName: string, extension: 'xlsx'): string {
-  const base = fileName.replace(/\.[^./\\]+$/, '') || 'result';
-  return `${base}${OUTPUT_SUFFIX}.${extension}`;
+  return `${baseName(fileName)}${OUTPUT_SUFFIX}.${extension}`;
+}
+
+/** 지도 캡처 n번째 장의 파일명. 여러 장으로 나눠 찍으므로 1부터 번호를 붙인다. */
+export function mapImageFileName(fileName: string, n: number): string {
+  return `${baseName(fileName)}${MAP_IMAGE_SUFFIX}_${n}.png`;
 }
 
 /**

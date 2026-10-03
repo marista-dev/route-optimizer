@@ -25,9 +25,12 @@ export interface MapCanvasProps {
  */
 export function MapCanvas({ center = DEFAULT_CENTER, children }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { map, error, fitBounds } = useKakaoMap(containerRef, { center, level: DEFAULT_LEVEL });
+  const { map, error, fitBounds, relayout } = useKakaoMap(containerRef, { center, level: DEFAULT_LEVEL });
 
-  const value = useMemo(() => ({ map, fitBounds }), [map, fitBounds]);
+  const value = useMemo(
+    () => ({ map, fitBounds, relayout }),
+    [map, fitBounds, relayout],
+  );
 
   return (
     <div className="ro-map">

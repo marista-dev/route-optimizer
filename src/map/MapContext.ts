@@ -9,6 +9,8 @@ export interface MapContextValue {
   map: KakaoMap | null;
   /** 주어진 좌표가 모두 보이도록 화면을 맞춘다 */
   fitBounds: (points: LatLng[]) => void;
+  /** 컨테이너 크기가 바뀐 뒤 지도를 다시 맞춘다(`map.relayout()`) */
+  relayout: () => void;
 }
 
 const noop = () => {};
@@ -16,6 +18,7 @@ const noop = () => {};
 export const MapContext = createContext<MapContextValue>({
   map: null,
   fitBounds: noop,
+  relayout: noop,
 });
 
 /** 레이어 컴포넌트에서 지도 컨텍스트를 읽는다. `MapCanvas` 밖에서는 map이 null이다. */
