@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  FRAME_SCALE_MAX,
+  FRAME_SCALE_MIN,
   MARKER_RADIUS_PX,
+  clampFrameScale,
   classifyPoints,
   fitA4Frame,
   formatOrderRanges,
@@ -10,6 +13,8 @@ import {
   planNextWindow,
   planPages,
   roundPan,
+  scaleFrame,
+  scaleFromCornerDrag,
 } from '../capture/geometry';
 import type { AutoProgress, MarkerPoint, Orientation, Rect, Size } from '../capture/types';
 import { WRONG_SURFACE_ERROR, useTabCapture } from '../capture/useTabCapture';
@@ -38,6 +43,11 @@ const IDLE_TIMEOUT_MS = 3000;
 const SETTLE_TIMEOUT_MS = 1500;
 /** 예상 장수보다 이만큼 더 돌면 멈춘다(무한 반복 방지) */
 const EXTRA_AUTO_STEPS = 5;
+/**
+ * 프레임 크기 슬라이더 한 칸(`CaptureToolbar`의 step과 같다). 화면이 작아 하한이 올라가도
+ * 하한을 이 단위로 올림해 두어야 슬라이더가 100%까지 닿는다(range는 min부터 step 간격으로만 선다).
+ */
+const FRAME_SCALE_STEP = 0.05;
 
 const EMPTY_SET: ReadonlySet<number> = new Set();
 
@@ -61,8 +71,10 @@ export interface MapCapture {
   attachCanvas: (el: HTMLDivElement | null) => void;
   /** `<MarkerPositions onChange>`에 연결 */
   onPoints: (points: MarkerPoint[]) => void;
-  /** `<MapBridge onChange>`에 연결. 지도 명령(`panBy`·`whenIdle`·`relayout`)을 받아 둔다 */
+  /** `<MapBridge onChange>`에 연결. 지도 명령(`panBy`·`whenIdle`·`relayout`·`zoomBy`)을 받아 둔다 */
   onMapContext: (ctx: MapContextValue | null) => void;
+  /** `<MapLevel onChange>`에 연결. 독의 확대 단계 표시에 쓴다. 캡처 모드에서만 마운트한다 */
+  onMapLevel: (level: number | null) => void;
   /** `<MapInteraction>` props. 캡처 모드에서만 마운트한다 */
   interaction: MapInteractionProps;
   /** 캡처 모드일 때만 값이 있다 */
@@ -189,8 +201,12 @@ function reportGrabError(err: unknown): void {
  * 화면(`ResultScreen`)은 돌려받은 props를 `CaptureFrame`·`CaptureToolbar`·
  * `CapturePreviewModal`·`MarkerPositions`·`MapInteraction`·`MapBridge`에 꽂기만 한다.
  *
- * - 프레임: 지도 컨테이너 안에서 하단 독 자리를 뺀 가장 큰 A4 사각형(`fitA4Frame`). 고정이며
- *   사용자는 아래의 지도를 끌어 맞춘다.
+ * - 프레임: 지도 컨테이너 안에서 하단 독 자리를 뺀 가장 큰 A4 사각형(`fitA4Frame`)을 중심을
+ *   고정한 채 `frameScale`(40~100%)만큼 줄인 것(`scaleFrame`). 크기는 모서리 핸들
+ *   (`scaleFromCornerDrag`)이나 독의 `크기` 슬라이더로 바꾸고, 방향을 바꿔도 유지하며, 캡처 모드를
+ *   닫으면 100%로 돌아간다. 저장·자동 저장 중에는 잠근다. 위치는 고정이며 사용자는 아래의 지도를
+ *   끌어 맞춘다. 판정·다음 구역·자동 저장·잘라 내기는 모두 줄어든 프레임 기준이다.
+ * - 확대·축소: 독의 `−`/`+`가 `MapBridge`로 받은 `zoomBy`를 부르고, 레벨 표시는 `<MapLevel>`이 올린다.
  * - `다음 구역`: 남은 순번 중 가장 빠른 것을 담으면서 남은 마커가 가장 많이 들어가는 자리로
  *   `panBy`한다(`planNextWindow`).
  * - `남은 구역 모두 저장`: 같은 계산을 한 장마다 다시 하며 옮기고 → 기다리고 → 찍고 → 바로
@@ -209,6 +225,10 @@ export function useMapCapture({
 
   const [active, setActive] = useState(false);
   const [orientation, setOrientation] = useState<Orientation>('portrait');
+  /** 프레임 크기 배율(최대 A4 프레임 대비). 실제 값은 화면 크기에 따른 하한으로 다시 자른다 */
+  const [frameScale, setFrameScale] = useState(FRAME_SCALE_MAX);
+  /** 지도 확대 레벨(`<MapLevel>`). 모르면 null */
+  const [zoomLevel, setZoomLevel] = useState<number | null>(null);
   /** 캡처 직전 장식 숨김 */
   const [hidden, setHidden] = useState(false);
   /** 사용자가 지도를 끌거나 확대하는 중 */
@@ -244,6 +264,8 @@ export function useMapCapture({
   const onMapContext = useCallback((ctx: MapContextValue | null) => {
     mapRef.current = ctx;
   }, []);
+
+  const onMapLevel = useCallback((level: number | null) => setZoomLevel(level), []);
 
   // ── 지도 컨테이너 · 독 크기 ───────────────────────────────────────────────
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
@@ -300,9 +322,25 @@ export function useMapCapture({
   }, [active]);
 
   // ── 프레임과 마커 판정 ────────────────────────────────────────────────────
-  const frameRect = useMemo(
+  /** 화면에 들어가는 가장 큰 A4 프레임. 크기 조절의 기준(100%)이다 */
+  const maxFrameRect = useMemo(
     () => fitA4Frame(bounds, orientation, dock.height + dock.gap, FRAME_MARGIN_PX),
     [bounds, orientation, dock],
+  );
+  /**
+   * 이 화면에서 줄일 수 있는 하한. 짧은 변 160px 하한(`clampFrameScale`)을 슬라이더 한 칸 단위로
+   * 올림한다. 화면이 너무 작아 줄일 수 없으면 1(슬라이더 잠김).
+   */
+  const scaleMin = useMemo(() => {
+    const floor = clampFrameScale(maxFrameRect, FRAME_SCALE_MIN);
+    return Math.min(Math.ceil(floor / FRAME_SCALE_STEP - 1e-9) * FRAME_SCALE_STEP, FRAME_SCALE_MAX);
+  }, [maxFrameRect]);
+  /** 실제로 쓰는 배율. 창이 다시 커지면 사용자가 고른 값으로 돌아간다 */
+  const effectiveScale = Math.min(Math.max(frameScale, scaleMin), FRAME_SCALE_MAX);
+  /** 실제 캡처 프레임. 판정·다음 구역·자동 저장·잘라 내기 모두 이 사각형을 쓴다 */
+  const frameRect = useMemo(
+    () => scaleFrame(maxFrameRect, effectiveScale),
+    [maxFrameRect, effectiveScale],
   );
 
   /** 순번이 붙은 그룹의 마커만. 순번이 없으면 찍을 대상이 아니다 */
@@ -333,14 +371,15 @@ export function useMapCapture({
   );
 
   const label = useMemo(() => {
-    const paper = `A4 ${orientation === 'portrait' ? '세로' : '가로'}`;
+    const size = effectiveScale < FRAME_SCALE_MAX ? ` · ${Math.round(effectiveScale * 100)}%` : '';
+    const paper = `A4 ${orientation === 'portrait' ? '세로' : '가로'}${size}`;
     const inside = labeledPoints.filter((p) => placement.get(p.groupId) === 'inside');
     if (inside.length === 0) {
       return `${paper} · 이 장에 온전히 든 순번 없음`;
     }
     const ranges = formatOrderRanges(inside.flatMap((p) => labelByGroup.get(p.groupId) ?? []));
     return `${paper} · 이 장 ${ranges} (${inside.length}곳)`;
-  }, [orientation, labeledPoints, placement, labelByGroup]);
+  }, [orientation, effectiveScale, labeledPoints, placement, labelByGroup]);
 
   // ── 찍은 순번 / 남은 순번 ─────────────────────────────────────────────────
   const totalCount = labelByGroup.size;
@@ -395,6 +434,7 @@ export function useMapCapture({
     setFaded(false);
     setPending(null);
     setAutoProgress(null);
+    setFrameScale(FRAME_SCALE_MAX);
     pointsRef.current = [];
     setPoints([]);
   }, [stop]);
@@ -534,7 +574,8 @@ export function useMapCapture({
       `지금 확대 수준으로 약 ${estimate}장을 차례로 저장합니다.${firstShare}\n크롬이 '여러 파일 다운로드'를 물으면 허용해 주세요.\n도중에 멈추려면 Esc를 누르세요.`,
     );
     // 확인 창이 떠 있는 동안 캡처 모드가 닫혔거나 다른 저장이 시작됐으면 그만둔다.
-    if (!ok || savingRef.current || autoRef.current || mapRef.current !== ctx) return;
+    // 같은 지도인지는 컨텍스트 객체가 아니라 `map`으로 본다.
+    if (!ok || savingRef.current || autoRef.current || mapRef.current?.map !== ctx.map) return;
 
     const session = sessionRef.current;
     let stopped = false;
@@ -651,6 +692,33 @@ export function useMapCapture({
   }, []);
   const onInteractEnd = useCallback(() => setFaded(false), []);
 
+  // ── 프레임 크기 · 확대 ────────────────────────────────────────────────────
+  /** 슬라이더 값. 화면에 따른 하한으로 자른다 */
+  const onFrameScale = useCallback(
+    (s: number) => {
+      if (!Number.isFinite(s) || savingRef.current || autoRef.current) return;
+      setFrameScale(Math.min(Math.max(s, scaleMin), FRAME_SCALE_MAX));
+    },
+    [scaleMin],
+  );
+  /** 모서리 핸들 끌기. `pointer`는 지도 컨테이너 기준이라 프레임과 같은 좌표계다 */
+  const onResize = useCallback(
+    (pointer: { x: number; y: number }) => {
+      if (savingRef.current || autoRef.current) return;
+      const s = scaleFromCornerDrag(maxFrameRect, pointer);
+      setFrameScale(Math.min(Math.max(s, scaleMin), FRAME_SCALE_MAX));
+    },
+    [maxFrameRect, scaleMin],
+  );
+  // 카카오 레벨은 클수록 축소다. 저장 중에는 독이 버튼을 잠그지만 한 번 더 막는다
+  // (확대가 `zoom_start`를 내 자동 저장을 멈추게 한다).
+  const zoomBy = useCallback((delta: number) => {
+    if (savingRef.current || autoRef.current) return;
+    mapRef.current?.zoomBy(delta);
+  }, []);
+  const onZoomIn = useCallback(() => zoomBy(-1), [zoomBy]);
+  const onZoomOut = useCallback(() => zoomBy(1), [zoomBy]);
+
   // 캡처하는 동안에는 토스트도 숨긴다. 토스트는 닫을 때까지 남아 있어서(예: 엑셀 다운로드 안내)
   // 지도 아래쪽에 그대로 찍힌다. 토스트는 화면 밖(App)에 있으므로 루트 클래스로 숨긴다.
   useEffect(() => {
@@ -688,6 +756,9 @@ export function useMapCapture({
         markerRadius: MARKER_RADIUS_PX,
         hidden,
         faded,
+        // 저장(미리보기 찍기)·자동 저장 중에는 크기를 잠근다. 찍는 사이 프레임이 바뀌면 안 된다.
+        resizable: !saving && !autoRunning && !hidden && pending === null,
+        onResize,
       }
     : null;
 
@@ -706,6 +777,13 @@ export function useMapCapture({
     faded,
     hidden,
     onClose: exit,
+    frameScale: effectiveScale,
+    onFrameScale,
+    scaleMin,
+    scaleMax: FRAME_SCALE_MAX,
+    zoomLevel,
+    onZoomIn,
+    onZoomOut,
   };
 
   const preview: CapturePreviewModalProps | null =
@@ -726,6 +804,7 @@ export function useMapCapture({
     attachCanvas: setCanvasEl,
     onPoints,
     onMapContext,
+    onMapLevel,
     interaction: { onInteractStart, onInteractEnd },
     frame,
     toolbar,

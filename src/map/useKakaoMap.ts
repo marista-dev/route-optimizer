@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 
+import { clampLevel, createWheelAccumulator, normalizeWheelDelta } from './wheelZoom';
 import type { LatLng } from '../types';
 
 /**
@@ -39,6 +40,116 @@ export interface UseKakaoMapResult {
    * 지도가 없으면 바로 끝난다. 실패(reject)하지 않는다.
    */
   whenIdle: (timeoutMs: number) => Promise<void>;
+  /**
+   * 지도 중심을 기준으로 확대 레벨을 `delta`만큼 바꾼다(부드럽게). 카카오 레벨은 클수록 축소라
+   * `+1`은 축소, `−1`은 확대다. 레벨 범위(기본 1~14, 지도에 설정된 min/max)로 자르고,
+   * 바뀌지 않으면 아무것도 하지 않는다. 지도가 없으면 무시한다.
+   */
+  zoomBy: (delta: number) => void;
+}
+
+/** 카카오 지도 레벨 범위(작을수록 확대) */
+const LEVEL_MIN = 1;
+const LEVEL_MAX = 14;
+
+/** 휠·버튼으로 레벨을 바꿀 때의 애니메이션 시간(ms) */
+const ZOOM_ANIMATE_MS = 200;
+
+/**
+ * 트랙패드 핀치(크롬·사파리는 `ctrlKey: true`인 wheel로 온다)의 이동량 배율.
+ * 핀치는 한 번에 몇 px씩만 와서 그대로면 한 단계까지 너무 오래 걸린다.
+ */
+const PINCH_GAIN = 5;
+
+/** 더블클릭 뒤 카카오가 스스로 확대했는지 확인하기까지 기다리는 시간(ms) */
+const DBLCLICK_CHECK_MS = 60;
+
+/** 지도에 설정된 레벨 범위. SDK에 getter가 없으면 기본 1~14 */
+function levelRange(m: KakaoMap): { min: number; max: number } {
+  const min = typeof m.getMinLevel === 'function' ? Number(m.getMinLevel()) : NaN;
+  const max = typeof m.getMaxLevel === 'function' ? Number(m.getMaxLevel()) : NaN;
+  return {
+    min: Number.isFinite(min) ? Math.max(min, LEVEL_MIN) : LEVEL_MIN,
+    max: Number.isFinite(max) ? Math.min(max, LEVEL_MAX) : LEVEL_MAX,
+  };
+}
+
+/** 터치가 주 입력인 기기인지(휴대폰·태블릿). 이 경우 카카오 기본 핀치 확대를 그대로 둔다 */
+function isCoarsePointer(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+}
+
+/**
+ * 카카오 기본 휠 확대를 끄고 안정화한 휠 확대로 바꾼다. 해제 함수를 돌려준다.
+ *
+ * - `map.setZoomable(false)`로 SDK 휠 확대를 끄고, 컨테이너에 `wheel`(캡처 단계, passive: false)을 단다.
+ * - 휠 입력은 `createWheelAccumulator`로 모아 한 칸(크롬 100px·파이어폭스 48px)마다 정확히 1레벨, 바꾼 뒤 250ms는 무시한다.
+ * - 커서 위치(`coordsFromContainerPoint`)를 기준점(anchor)으로 200ms 애니메이션한다.
+ * - `ctrlKey`가 켜진 wheel(트랙패드 핀치, Ctrl+휠)도 확대로 처리하고 브라우저 페이지 확대는 막는다.
+ * - `setZoomable(false)`가 더블클릭 확대까지 끄는 경우에 대비해, 더블클릭 뒤 카카오가 확대를
+ *   시작하지 않았으면(`zoom_start` 없음, 레벨 그대로) 더블클릭 지점을 기준으로 1레벨 확대한다.
+ *   카카오가 스스로 확대했다면 아무것도 하지 않는다(두 번 확대되지 않게).
+ * - 터치가 주 입력인 기기(`pointer: coarse`)에서는 아무것도 하지 않는다 — `setZoomable(false)`가
+ *   핀치 확대까지 끌 수 있어서다. 터치 노트북처럼 주 입력이 마우스인 기기에서는 터치스크린 핀치가
+ *   꺼질 수 있다(수동 확인 필요).
+ */
+function stabilizeWheelZoom(m: KakaoMap, el: HTMLElement): () => void {
+  if (isCoarsePointer()) return () => {};
+
+  m.setZoomable(false);
+  const accumulate = createWheelAccumulator({ cooldownMs: 250 });
+
+  const onWheel = (e: WheelEvent) => {
+    // 세로 이동이 없는 가로 스크롤은 지도와 무관하다.
+    if (e.deltaY === 0) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const px = normalizeWheelDelta(e, rect.height) * (e.ctrlKey ? PINCH_GAIN : 1);
+    const step = accumulate(px, performance.now());
+    if (step === 0) return;
+
+    const { min, max } = levelRange(m);
+    const cur = Number(m.getLevel());
+    const next = clampLevel(cur + step, min, max);
+    if (next === cur) return;
+    const point = new kakao.maps.Point(e.clientX - rect.left, e.clientY - rect.top);
+    const anchor = m.getProjection().coordsFromContainerPoint(point);
+    m.setLevel(next, { anchor, animate: { duration: ZOOM_ANIMATE_MS } });
+  };
+
+  // 더블클릭 확대 복원: 카카오가 확대를 시작했는지 `zoom_start` 시각으로 본다.
+  // 카카오 내부 더블클릭 확대가 우리 `dblclick` 리스너보다 먼저 돌 수도 있어(그러면 `before`가 이미
+  // 바뀐 레벨이다), 더블클릭 직전 짧은 구간의 `zoom_start`도 카카오가 확대한 것으로 친다.
+  let lastZoomStart = -Infinity;
+  let dblTimer: ReturnType<typeof setTimeout> | undefined;
+  const onZoomStart = () => {
+    lastZoomStart = performance.now();
+  };
+  const onDblClick = (mouseEvent: { latLng?: unknown }) => {
+    const at = performance.now();
+    const before = Number(m.getLevel());
+    const anchor = mouseEvent?.latLng;
+    clearTimeout(dblTimer);
+    dblTimer = setTimeout(() => {
+      if (lastZoomStart >= at - DBLCLICK_CHECK_MS || Number(m.getLevel()) !== before) return;
+      const { min, max } = levelRange(m);
+      const next = clampLevel(before - 1, min, max);
+      if (next === before) return;
+      m.setLevel(next, anchor ? { anchor, animate: true } : { animate: true });
+    }, DBLCLICK_CHECK_MS);
+  };
+
+  el.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  kakao.maps.event.addListener(m, 'zoom_start', onZoomStart);
+  kakao.maps.event.addListener(m, 'dblclick', onDblClick);
+
+  return () => {
+    clearTimeout(dblTimer);
+    el.removeEventListener('wheel', onWheel, { capture: true });
+    kakao.maps.event.removeListener(m, 'zoom_start', onZoomStart);
+    kakao.maps.event.removeListener(m, 'dblclick', onDblClick);
+    m.setZoomable(true);
+  };
 }
 
 /** `whenIdle`: `idle` 뒤 `tilesloaded`를 더 기다리는 최대 시간(ms) */
@@ -95,6 +206,14 @@ export function useKakaoMap(
     };
   }, [containerRef]);
 
+  // 휠 확대 안정화. 지도가 생긴 뒤 한 번 단다.
+  // 현재 레벨은 여기서 상태로 들고 있지 않는다(`MapLevel.tsx`의 `useMapLevel`이 따로 구독한다).
+  useEffect(() => {
+    if (!map) return;
+    const el = containerRef.current;
+    return el ? stabilizeWheelZoom(map, el) : undefined;
+  }, [map, containerRef]);
+
   const fitBounds = useCallback((points: LatLng[]) => {
     const m = mapRef.current;
     if (!m || points.length === 0) return;
@@ -143,5 +262,15 @@ export function useKakaoMap(
     });
   }, []);
 
-  return { map, error, fitBounds, relayout, panBy, whenIdle };
+  const zoomBy = useCallback((delta: number) => {
+    const m = mapRef.current;
+    if (!m || !Number.isFinite(delta) || delta === 0) return;
+    const { min, max } = levelRange(m);
+    const cur = Number(m.getLevel());
+    const next = clampLevel(cur + delta, min, max);
+    if (next === cur) return;
+    m.setLevel(next, { animate: { duration: ZOOM_ANIMATE_MS } });
+  }, []);
+
+  return { map, error, fitBounds, relayout, panBy, whenIdle, zoomBy };
 }

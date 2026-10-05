@@ -59,14 +59,14 @@ export interface MapCanvasProps {
 export function MapCanvas({ center = DEFAULT_CENTER, children }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const { map, error, fitBounds, relayout, panBy, whenIdle } = useKakaoMap(containerRef, {
+  const { map, error, fitBounds, relayout, panBy, whenIdle, zoomBy } = useKakaoMap(containerRef, {
     center,
     level: DEFAULT_LEVEL,
   });
 
   const value = useMemo(
-    () => ({ map, fitBounds, relayout, panBy, whenIdle }),
-    [map, fitBounds, relayout, panBy, whenIdle],
+    () => ({ map, fitBounds, relayout, panBy, whenIdle, zoomBy }),
+    [map, fitBounds, relayout, panBy, whenIdle, zoomBy],
   );
 
   useEffect(() => {

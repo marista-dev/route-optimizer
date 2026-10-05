@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { ArrowRight, ImageDown, Images, Square, X } from 'lucide-react';
+import { ArrowRight, ImageDown, Images, Minus, Plus, Square, X } from 'lucide-react';
 
 import type { AutoProgress, Orientation } from '../capture/types';
 
@@ -32,12 +32,37 @@ export interface CaptureToolbarProps {
   hidden?: boolean;
   /** 캡처 모드 닫기 */
   onClose: () => void;
+  /** 프레임 크기 비율(최대 A4 사각형 대비, `scaleMin`~`scaleMax`) */
+  frameScale: number;
+  /** `크기` 슬라이더를 움직였을 때. 값은 `scaleMin`~`scaleMax`로 잘라서 넘긴다 */
+  onFrameScale: (s: number) => void;
+  /** 슬라이더 하한(보통 `FRAME_SCALE_MIN`) */
+  scaleMin: number;
+  /** 슬라이더 상한(보통 `FRAME_SCALE_MAX`) */
+  scaleMax: number;
+  /** 카카오 지도 레벨(1~14, 작을수록 가까이). 아직 모르면 null */
+  zoomLevel: number | null;
+  /** `+` 확대 — 호출 쪽이 레벨을 1 내린다 */
+  onZoomIn: () => void;
+  /** `−` 축소 — 호출 쪽이 레벨을 1 올린다 */
+  onZoomOut: () => void;
 }
 
 const ORIENTATIONS: { value: Orientation; label: string }[] = [
   { value: 'portrait', label: '세로' },
   { value: 'landscape', label: '가로' },
 ];
+
+/** 카카오 지도 레벨 범위. 1이 가장 가깝다 */
+const MIN_LEVEL = 1;
+const MAX_LEVEL = 14;
+/** 슬라이더 한 칸 */
+const SCALE_STEP = 0.05;
+
+/** 레벨을 확대 단계 숫자로 바꾼다(1~14, 클수록 가까이). 카카오 레벨과 방향이 반대다 */
+function magnification(level: number): number {
+  return MAX_LEVEL + 1 - level;
+}
 
 /** 탭 캡처를 못 쓰는 브라우저에서 저장 버튼 대신 보이는 한 줄 안내 */
 const UNSUPPORTED_HINT =
@@ -47,6 +72,8 @@ const UNSUPPORTED_HINT =
  * 캡처 모드에서 지도 아래 가운데에 뜨는 한 줄짜리 독.
  *
  * 지도 컨테이너 위의 DOM이다(카카오 오버레이가 아니다). Esc로 닫기·중지는 화면 쪽이 처리한다.
+ * 구성: 방향 | 크기 슬라이더 · 확대 −/+ | 남은 개수 · 동작 버튼 · 닫기.
+ * 자동 저장·캡처 중에는 방향·크기·확대를 잠근다.
  * 높이는 CSS 변수 `--capture-dock-h`로 고정해 두므로, 화면 쪽은 그만큼 프레임 아래를 비운다.
  */
 export function CaptureToolbar({
@@ -64,12 +91,21 @@ export function CaptureToolbar({
   faded,
   hidden,
   onClose,
+  frameScale,
+  onFrameScale,
+  scaleMin,
+  scaleMax,
+  zoomLevel,
+  onZoomIn,
+  onZoomOut,
 }: CaptureToolbarProps) {
   const primaryRef = useRef<HTMLButtonElement | null>(null);
   const fallbackRef = useRef<HTMLButtonElement | null>(null);
   const auto = autoProgress !== null;
   const allDone = remainingCount <= 0;
   const busy = saving || auto;
+  const scalePct = `${Math.round(frameScale * 100)}%`;
+  const zoomKnown = zoomLevel !== null;
 
   // 포커스가 갈 곳을 잃었을 때(진입하며 패널의 버튼이 사라짐, 캡처 중 숨김·비활성으로 버튼이
   // 포커스를 놓침, 자동 저장이 끝나 `중지`가 사라짐) 독으로 되돌린다. 키보드 사용자가 body에서
@@ -116,6 +152,65 @@ export function CaptureToolbar({
           );
         })}
       </div>
+
+      <span className="ro-capture-dock__sep" aria-hidden />
+
+      <label
+        className="ro-capture-scale"
+        title="A4 비율을 지킨 채 프레임 크기를 바꿉니다. 작을수록 이미지 화소 수가 줄어듭니다"
+      >
+        <span className="ro-capture-scale__label">크기</span>
+        <input
+          type="range"
+          className="ro-capture-scale__input"
+          min={scaleMin}
+          max={scaleMax}
+          step={SCALE_STEP}
+          value={frameScale}
+          aria-valuetext={scalePct}
+          // 화면이 작아 더 줄일 수 없으면(하한 = 상한) 잠근다.
+          disabled={busy || scaleMin >= scaleMax}
+          onChange={(e) => {
+            const v = Number(e.currentTarget.value);
+            if (Number.isFinite(v)) onFrameScale(Math.min(scaleMax, Math.max(scaleMin, v)));
+          }}
+        />
+        <span className="ro-capture-scale__value" aria-hidden>
+          {scalePct}
+        </span>
+      </label>
+
+      <div className="ro-capture-zoom" role="group" aria-label="지도 확대·축소">
+        <button
+          type="button"
+          className="ro-capture-zoom__btn"
+          aria-label="축소"
+          title="축소 (더 넓게)"
+          disabled={busy || !zoomKnown || zoomLevel >= MAX_LEVEL}
+          onClick={onZoomOut}
+        >
+          <Minus size={16} aria-hidden />
+        </button>
+        <span
+          className="ro-capture-zoom__level"
+          title={`지도 확대 단계 (${MAX_LEVEL}이 가장 가까이). 마우스 휠 한 칸에 한 단계씩 바뀝니다`}
+          aria-live="polite"
+        >
+          {zoomKnown ? `확대 ${magnification(zoomLevel)}/${MAX_LEVEL}` : '확대 –'}
+        </span>
+        <button
+          type="button"
+          className="ro-capture-zoom__btn"
+          aria-label="확대"
+          title="확대 (더 가까이)"
+          disabled={busy || !zoomKnown || zoomLevel <= MIN_LEVEL}
+          onClick={onZoomIn}
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+      </div>
+
+      <span className="ro-capture-dock__sep" aria-hidden />
 
       <span
         className={`ro-capture-dock__count${allDone ? ' is-done' : ''}`}

@@ -1346,6 +1346,48 @@ input::placeholder {
   pointer-events: none;
 }
 
+/*
+ * 프레임 모서리 크기 조절 핸들. 히트 영역(32px)은 투명하고, 보이는 12px 사각형은 ::after로 그린다.
+ * 프레임 안에서 핸들만 포인터를 받는다(나머지는 지도 조작을 통과). 지도 조작 중에는 흐리게,
+ * 캡처 순간에는 `.ro-capture.is-hidden`(visibility)과 함께 숨는다.
+ */
+.ro-capture-handle {
+  position: absolute;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: none;
+  transition: opacity 150ms ease;
+}
+.ro-capture-handle--nw,
+.ro-capture-handle--se {
+  cursor: nwse-resize;
+}
+.ro-capture-handle--ne,
+.ro-capture-handle--sw {
+  cursor: nesw-resize;
+}
+.ro-capture-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  border-radius: 3px;
+  background: var(--primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 120ms ease;
+}
+.ro-capture-handle:hover::after,
+.ro-capture-handle:active::after {
+  transform: translate(-50%, -50%) scale(1.25);
+}
+.ro-capture.is-faded .ro-capture-handle {
+  opacity: 0.35;
+}
+
 /* 하단 독: 지도 아래 가운데 한 줄. 좁은 화면에서는 두 줄까지 내려간다. */
 .ro-capture-dock {
   position: absolute;
@@ -1447,6 +1489,85 @@ input::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 독 안 구분선. 줄바꿈되는 좁은 화면에서는 숨긴다. */
+.ro-capture-dock__sep {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+}
+/* `크기` 슬라이더: 라벨 · range · 퍼센트 */
+.ro-capture-scale {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ro-capture-scale__input {
+  width: 88px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.ro-capture-scale__input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.ro-capture-scale__input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ro-capture-scale__value {
+  min-width: 3.2em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+/* 확대 −/+ 묶음: 방향 전환 세그먼트와 같은 상자 모양 */
+.ro-capture-zoom {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.ro-capture-zoom__btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.ro-capture-zoom__btn:hover:not(:disabled) {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.ro-capture-zoom__btn:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ro-capture-zoom__btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.ro-capture-zoom__level {
+  min-width: 5.4em;
+  padding: 0 4px;
+  text-align: center;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 @media (max-width: 720px) {
   .ro-capture-dock {
     max-width: calc(100% - 16px);
@@ -1456,9 +1577,14 @@ input::placeholder {
     white-space: normal;
     max-width: none;
   }
+  .ro-capture-dock__sep {
+    display: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .ro-capture-deco,
+  .ro-capture-handle,
+  .ro-capture-handle::after,
   .ro-capture-dock {
     transition: none;
   }
